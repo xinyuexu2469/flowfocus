@@ -1,0 +1,31 @@
+
+> focus-flow-backend@1.0.0 start
+> node server.js
+
+Starting October 8, 2024, the Node SDK is entering a three-month notice period. We encourage everyone to migrate to @clerk/express. For full details, please see our changelog: https://clerk.com/changelog/2024-10-08-express-sdk
+⚠️  WARNING: Running in DEVELOPMENT MODE (no Clerk authentication)
+⚠️  This should only be used for local development!
+⚠️  To enable authentication, add CLERK_SECRET_KEY to backend/.env
+🚀 Server running on http://localhost:4000
+📊 Health check: http://localhost:4000/api/health
+✅ Database connected successfully at 2025-12-08T18:32:11.153Z
+Executed query {
+  text: 'SELECT t.*,\n       COALESCE(\n         SUM(EXTRACT(...',
+  duration: 14,
+  rows: 7
+}
+Executed query {
+  text: 'SELECT t.*,\n       COALESCE(\n         SUM(EXTRACT(...',
+  duration: 2,
+  rows: 7
+}
+Executed query {
+  text: 'SELECT * FROM time_segments \n               WHERE ...',
+  duration: 3,
+  rows: 6
+}
+Executed query {
+  text: 'SELECT * FROM time_segments \n               WHERE ...',
+  duration: 1,
+  rows: 6
+}
