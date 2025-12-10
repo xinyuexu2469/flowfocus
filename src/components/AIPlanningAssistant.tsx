@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { getClerkTokenGetter } from "@/lib/clerk-api";
 import { Loader2, Bot, Send, Check, X, Calendar, Clock, Sparkles } from "lucide-react";
@@ -53,6 +54,7 @@ export const AIPlanningAssistant = ({
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [plannedTasks, setPlannedTasks] = useState<PlannedTask[]>([]);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -70,11 +72,13 @@ export const AIPlanningAssistant = ({
       const welcomeMessage: Message = {
         id: "welcome",
         role: "assistant",
-        content: "Hello! I'm your AI Planning Assistant 🤖\n\nPlease tell me all the tasks and situations you need to handle, and I'll help you generate a complete task list and time schedule.\n\nFor example:\n\"Next week I need to prepare for final exams, including CS101, Math, and Physics. The CS101 exam is on Friday, and I also need to complete a programming assignment. There's a group meeting on Wednesday at 3 PM. I want to reserve 2 hours each day for exercise and rest.\"",
+        content:
+          "Hi there! I’m your planning buddy—warm and gentle like a big sister. Tell me what you want to do today/this week and any deadlines or fixed events. If you’re not sure yet, I can show a tiny example and ask a few gentle questions so we can plan based on your situation.",
         timestamp: new Date(),
       };
       setMessages([welcomeMessage]);
       setPlannedTasks([]);
+      setSelectedTaskIds(new Set());
       setInput("");
     }
   }, [open]);
@@ -88,6 +92,21 @@ export const AIPlanningAssistant = ({
       content: input.trim(),
       timestamp: new Date(),
     };
+
+    // If the user only says hi or gives too little info, respond gently without calling backend
+    const trimmed = input.trim();
+    if (trimmed.length < 6) {
+      const gentleReply: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content:
+          "Tell me a bit more—what you need to do, deadlines, available hours, or existing events. I can share a quick example if you like, but I’ll wait for your details to tailor the plan.",
+        timestamp: new Date(),
+      };
+      setMessages([...messages, userMessage, gentleReply]);
+      setInput("");
+      return;
+    }
 
     // Update messages state and create the full messages array for the API call
     const updatedMessages = [...messages, userMessage];
@@ -151,6 +170,8 @@ export const AIPlanningAssistant = ({
           order: index,
         }));
         setPlannedTasks(mappedTasks);
+        // 默认不勾选，让用户确认想保留的任务
+        setSelectedTaskIds(new Set());
       }
 
       toast({
@@ -194,6 +215,19 @@ export const AIPlanningAssistant = ({
       return;
     }
 
+    const tasksToCreate = plannedTasks.filter((t) =>
+      selectedTaskIds.has(t.id)
+    );
+
+    if (tasksToCreate.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "没有选择任务",
+        description: "先勾选想要创建的任务，或直接关闭窗口。",
+      });
+      return;
+    }
+
     setIsCreating(true);
 
     try {
@@ -209,7 +243,7 @@ export const AIPlanningAssistant = ({
       let currentOrder = maxOrder + 1;
 
       // First pass: Create all tasks
-      for (const plannedTask of plannedTasks) {
+      for (const plannedTask of tasksToCreate) {
         // planned_date is required by backend; fall back to first time block date or today
         const firstBlockDate = plannedTask.timeBlocks[0]?.date || new Date().toISOString().split("T")[0];
         const taskData = {
@@ -252,9 +286,10 @@ export const AIPlanningAssistant = ({
       const today = new Date();
       await fetchSegmentsForDate(today);
 
+      const totalBlocks = tasksToCreate.reduce((sum, t) => sum + t.timeBlocks.length, 0);
       toast({
         title: "✅ Schedule Created",
-        description: `Created ${plannedTasks.length} task${plannedTasks.length !== 1 ? 's' : ''} and ${plannedTasks.reduce((sum, t) => sum + t.timeBlocks.length, 0)} time block${plannedTasks.reduce((sum, t) => sum + t.timeBlocks.length, 0) !== 1 ? 's' : ''}`,
+        description: `Created ${tasksToCreate.length} task${tasksToCreate.length !== 1 ? 's' : ''} and ${totalBlocks} time block${totalBlocks !== 1 ? 's' : ''}`,
       });
 
       onSuccess();
@@ -275,8 +310,31 @@ export const AIPlanningAssistant = ({
   const reset = () => {
     setMessages([]);
     setPlannedTasks([]);
+    setSelectedTaskIds(new Set());
     setInput("");
   };
+
+  const toggleTaskSelection = (taskId: string) => {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  };
+
+  const selectAllTasks = () => {
+    setSelectedTaskIds(new Set(plannedTasks.map((t) => t.id)));
+  };
+
+  const clearSelectedTasks = () => {
+    setSelectedTaskIds(new Set());
+  };
+
+  const selectedCount = useMemo(() => selectedTaskIds.size, [selectedTaskIds]);
 
   const getPriorityColor = (priority: string): "default" | "destructive" | "secondary" => {
     switch (priority) {
@@ -327,7 +385,7 @@ export const AIPlanningAssistant = ({
           {plannedTasks.length > 0 && (
             <Button
               onClick={handleCreateSchedule}
-              disabled={isCreating}
+              disabled={isCreating || selectedCount === 0}
               className="gap-2"
             >
               {isCreating ? (
@@ -338,7 +396,7 @@ export const AIPlanningAssistant = ({
               ) : (
                 <>
                   <Check className="w-4 h-4" />
-                  Create Schedule ({plannedTasks.length} task{plannedTasks.length !== 1 ? 's' : ''})
+                  Create Selected ({selectedCount} task{selectedCount !== 1 ? 's' : ''})
                 </>
               )}
             </Button>
@@ -457,6 +515,15 @@ export const AIPlanningAssistant = ({
               <div className="space-y-4">
                 <div>
                   <h3 className="text-lg font-semibold mb-4">Task List</h3>
+                  <div className="flex items-center gap-2 mb-3 text-sm text-muted-foreground">
+                    <span>生成后请勾选想保留的任务（不满意可以一个都不选）</span>
+                    <Button variant="ghost" size="sm" onClick={selectAllTasks} className="h-7 px-2">
+                      全选
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={clearSelectedTasks} className="h-7 px-2">
+                      清空
+                    </Button>
+                  </div>
                   <div className="space-y-3">
                     {plannedTasks
                       .filter((t) => !t.parentTaskId)
@@ -467,14 +534,21 @@ export const AIPlanningAssistant = ({
                         return (
                           <Card key={task.id} className="p-4">
                             <div className="space-y-2">
-                              <div className="flex items-start justify-between">
-                                <div className="flex-1">
-                                  <h4 className="font-medium">{task.title}</h4>
-                                  {task.description && (
-                                    <p className="text-sm text-muted-foreground mt-1">
-                                      {task.description}
-                                    </p>
-                                  )}
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-start gap-2 flex-1">
+                                  <Checkbox
+                                    checked={selectedTaskIds.has(task.id)}
+                                    onCheckedChange={() => toggleTaskSelection(task.id)}
+                                    className="mt-1"
+                                  />
+                                  <div className="flex-1">
+                                    <h4 className="font-medium">{task.title}</h4>
+                                    {task.description && (
+                                      <p className="text-sm text-muted-foreground mt-1">
+                                        {task.description}
+                                      </p>
+                                    )}
+                                  </div>
                                 </div>
                                 <Badge
                                   variant="outline"
@@ -515,16 +589,23 @@ export const AIPlanningAssistant = ({
                                 <div className="mt-3 pl-4 border-l-2 border-muted space-y-2">
                                   {subtasks.map((subtask) => (
                                     <Card key={subtask.id} className="p-3 bg-muted/50">
-                                      <div className="flex items-start justify-between">
-                                        <div className="flex-1">
-                                          <h5 className="text-sm font-medium">
-                                            {subtask.title}
-                                          </h5>
-                                          {subtask.description && (
-                                            <p className="text-xs text-muted-foreground mt-1">
-                                              {subtask.description}
-                                            </p>
-                                          )}
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="flex items-start gap-2 flex-1">
+                                          <Checkbox
+                                            checked={selectedTaskIds.has(subtask.id)}
+                                            onCheckedChange={() => toggleTaskSelection(subtask.id)}
+                                            className="mt-1"
+                                          />
+                                          <div className="flex-1">
+                                            <h5 className="text-sm font-medium">
+                                              {subtask.title}
+                                            </h5>
+                                            {subtask.description && (
+                                              <p className="text-xs text-muted-foreground mt-1">
+                                                {subtask.description}
+                                              </p>
+                                            )}
+                                          </div>
                                         </div>
                                         <Badge
                                           variant="outline"

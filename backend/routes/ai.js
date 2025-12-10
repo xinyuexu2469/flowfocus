@@ -11,6 +11,18 @@ export const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   : null;
 
+// Build a warm, non-intrusive response when context is insufficient or OpenAI is not configured
+function buildNeedsContextResponse(lastUserContent = '') {
+  const preview = lastUserContent ? `(I saw you wrote: “${lastUserContent.slice(0, 40)}”) ` : '';
+  return {
+    summary: "I'd love to hear more from you before planning.",
+    notesForUser:
+      `${preview}Tell me what you want to do today/this week, deadlines, available hours, fixed events, and priorities. ` +
+      "If you're unsure, I can give a tiny example to spark ideas—it's just an example, so share your own details and I'll tailor the plan to you.",
+    tasks: [],
+  };
+}
+
 /**
  * Shared helper function for planning logic
  */
@@ -19,20 +31,29 @@ async function handlePlanningRequest(messages) {
     throw new Error('Messages array is required');
   }
 
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+
+  // If the user only greets or provides too little context, return gentle guidance instead of forcing a plan
+  if (!lastUser || !lastUser.content || lastUser.content.trim().length < 10) {
+    return buildNeedsContextResponse(lastUser?.content);
+  }
+
   // Check if OpenAI API key is configured
   if (!openai) {
-    console.warn('⚠️  OpenAI API key not configured. Returning mock plan.');
-    return generateMockPlanningResponse(messages);
+    console.warn('⚠️  OpenAI API key not configured. Returning gentle guidance instead of mock tasks.');
+    return buildNeedsContextResponse(lastUser?.content);
   }
 
   // Build system prompt (include current date/time to anchor schedules)
   const nowIso = new Date().toISOString();
   const currentDate = nowIso.split('T')[0];
-  const currentTime = nowIso.split('T')[1].slice(0,5);
+  const currentTime = nowIso.split('T')[1].slice(0, 5);
 
   const systemPrompt = `You are an expert time-management and scheduling assistant inside an app called FlowFocus.
-The user may speak Chinese or English; always respond in the same language.
-Read the full conversation and produce a **list of tasks and a time-blocked schedule**.
+Always respond in English, warm and conversational like a caring older sister (gentle, not pushy).
+Always base your planning on what the user said in this conversation.
+If details are insufficient, you may offer a very short illustrative example clearly labeled as "example", but do NOT treat it as the user's tasks. Prefer to ask for their tasks, deadlines, class/meeting times, working hours, and constraints. Be soft and encouraging, never pushy.
+Only produce a task list and time-blocked schedule when enough details are present.
 Current date: ${currentDate}
 Current time (24h): ${currentTime}
 Unless the user specifies otherwise, assume they are planning for today (${currentDate}) and the next few days.
@@ -41,26 +62,24 @@ Keep suggested time blocks aligned to the current date/time context.
 For each task, extract:
 - title: Clear, concise task title
 - description: Optional detailed description
-- priority: "high" | "medium" | "low" based on urgency and importance
-- status: "todo" | "in_progress" | "done" based on conversation
-- estimatedMinutes: Reasonable time estimate in minutes
-- deadline: Optional ISO date string if mentioned
-- linkToGoalId: Optional goal ID if relevant (can be null)
-- workTimeBlocks: Array of schedule suggestions with date (YYYY-MM-DD), startTime (HH:mm), endTime (HH:mm)
+- priority: "high" | "medium" | "low"
+- status: "todo" | "in_progress" | "done"
+- estimatedMinutes: number
+- deadline: Optional ISO date string or null
+- linkToGoalId: Optional goal ID or null
+- workTimeBlocks: Array of { date (YYYY-MM-DD), startTime (HH:mm), endTime (HH:mm) }
 
-Respect constraints from the conversation (deadlines, "I can't work after 11pm", class times, etc.).
+Respect all constraints (deadlines, no work after certain hours, class times, etc.).
 Time blocks should not overlap and should be within reasonable hours.
 Always output JSON that exactly matches the PlanningResponse schema.`;
 
-  // Use chat.completions.create with structured output
-  // Note: Using gpt-4o as gpt-5.1 may not be available yet
   let planData;
   try {
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
         { role: 'system', content: systemPrompt },
-        ...messages.map(m => ({ role: m.role, content: m.content })),
+        ...messages.map((m) => ({ role: m.role, content: m.content })),
       ],
       temperature: 0.7,
       max_tokens: 4000,
@@ -78,25 +97,19 @@ Always output JSON that exactly matches the PlanningResponse schema.`;
                 type: 'array',
                 items: {
                   type: 'object',
-                    properties: {
-                      title: { type: 'string' },
-                      description: { type: 'string' },
-                      priority: { type: 'string', enum: ['high', 'medium', 'low'] },
-                      status: { type: 'string', enum: ['todo', 'in_progress', 'done'] },
-                      estimatedMinutes: { type: 'number' },
-                      deadline: { 
-                        anyOf: [
-                          { type: 'string' },
-                          { type: 'null' }
-                        ]
-                      },
-                      linkToGoalId: { 
-                        anyOf: [
-                          { type: 'string' },
-                          { type: 'null' }
-                        ]
-                      },
-                      workTimeBlocks: {
+                  properties: {
+                    title: { type: 'string' },
+                    description: { type: 'string' },
+                    priority: { type: 'string', enum: ['high', 'medium', 'low'] },
+                    status: { type: 'string', enum: ['todo', 'in_progress', 'done'] },
+                    estimatedMinutes: { type: 'number' },
+                    deadline: {
+                      anyOf: [{ type: 'string' }, { type: 'null' }],
+                    },
+                    linkToGoalId: {
+                      anyOf: [{ type: 'string' }, { type: 'null' }],
+                    },
+                    workTimeBlocks: {
                       type: 'array',
                       items: {
                         type: 'object',
@@ -110,7 +123,16 @@ Always output JSON that exactly matches the PlanningResponse schema.`;
                       },
                     },
                   },
-                  required: ['title', 'description', 'priority', 'status', 'estimatedMinutes', 'deadline', 'linkToGoalId', 'workTimeBlocks'],
+                  required: [
+                    'title',
+                    'description',
+                    'priority',
+                    'status',
+                    'estimatedMinutes',
+                    'deadline',
+                    'linkToGoalId',
+                    'workTimeBlocks',
+                  ],
                   additionalProperties: false,
                 },
               },
@@ -129,13 +151,61 @@ Always output JSON that exactly matches the PlanningResponse schema.`;
   }
 
   console.log(`✅ [AI Planning] Generated ${planData.tasks?.length || 0} tasks`);
-
   return planData;
 }
 
 /**
+ * POST /api/ai/chat
+ */
+router.post('/chat', async (req, res) => {
+  try {
+    const { message, context } = req.body;
+    if (!message || message.trim() === '') {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+    if (!openai) {
+      console.warn('⚠️  OpenAI API key not configured. Returning mock response.');
+      return res.json({
+        reply: 'AI chat is not configured. Please add OPENAI_API_KEY to backend/.env',
+      });
+    }
+    const messages = [];
+    if (context?.tasks && context.tasks.length > 0) {
+      const taskSummary = context.tasks.map((t) => `- ${t.title} (${t.status})`).join('\n');
+      messages.push({
+        role: 'system',
+        content:
+          'You are a warm, gentle, big-sister-like assistant in FlowFocus. Always respond in English. Current tasks:\n' +
+          taskSummary,
+      });
+    } else {
+      messages.push({
+        role: 'system',
+        content:
+          'You are a warm, gentle, big-sister-like assistant in FlowFocus. Always respond in English.',
+      });
+    }
+    messages.push({ role: 'user', content: message });
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages,
+      temperature: 0.7,
+      max_tokens: 1000,
+    });
+    const reply = completion.choices[0].message.content || 'Sorry, I could not generate a response.';
+    res.json({ reply });
+  } catch (error) {
+    console.error('❌ [AI Chat] Error:', error);
+    res.status(500).json({
+      error: 'Failed to get chat response',
+      message: error.message || 'An unexpected error occurred',
+    });
+  }
+});
+
+/**
  * POST /api/ai/planning
- * Generate a complete plan with tasks and time scheduling based on multi-turn conversation
  */
 router.post('/planning', async (req, res) => {
   try {
@@ -144,10 +214,14 @@ router.post('/planning', async (req, res) => {
     res.json(planData);
   } catch (error) {
     console.error('❌ [AI Planning] Error:', error);
-    if (error.message === 'Messages array is required') {
+    if (error.status === 400 || error.message === 'INSUFFICIENT_CONTEXT') {
       return res.status(400).json({
-        error: error.message,
+        error: 'insufficient_context',
+        message: error.hint || 'Please share tasks, deadlines, constraints, and available time, then try again.',
       });
+    }
+    if (error.message === 'Messages array is required') {
+      return res.status(400).json({ error: error.message });
     }
     res.status(500).json({
       error: 'Failed to generate plan',
@@ -158,26 +232,18 @@ router.post('/planning', async (req, res) => {
 
 /**
  * POST /api/ai/task-breakdown
- * Use AI to break down a complex task into manageable subtasks
  */
 router.post('/task-breakdown', async (req, res) => {
   try {
     const { taskTitle, baseDescription, extraContext } = req.body;
-
     if (!taskTitle || taskTitle.trim() === '') {
-      return res.status(400).json({
-        error: 'Task title is required',
-      });
+      return res.status(400).json({ error: 'Task title is required' });
     }
-
-    // Check if OpenAI API key is configured
     if (!openai) {
       console.warn('⚠️  OpenAI API key not configured. Returning mock breakdown.');
-      const mockBreakdown = generateMockTaskBreakdown(taskTitle);
-      return res.json(mockBreakdown);
+      return res.json(generateMockTaskBreakdown(taskTitle));
     }
 
-    // Build system prompt
     const systemPrompt = `You are an assistant that breaks one task into 3–10 clear, actionable steps.
 For each step, provide a concise title, a short optional description, and an estimated duration in minutes.
 The user may speak Chinese or English; respond in the same language.
@@ -189,69 +255,54 @@ ${fullDescription ? `Description:\n${fullDescription}` : ''}
 
 Break this task down into 3-10 clear, actionable steps.`;
 
-    console.log('🤖 [AI Task Breakdown] Breaking down:', taskTitle);
-
-    // Use chat.completions.create with structured output
-    let breakdownData;
-    try {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.7,
-        max_tokens: 2000,
-        response_format: {
-          type: 'json_schema',
-          json_schema: {
-            name: 'task_breakdown_response',
-            strict: true,
-            schema: {
-              type: 'object',
-              properties: {
-                steps: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      title: { type: 'string' },
-                      description: { type: 'string' },
-                      estimatedMinutes: { type: 'number' },
-                    },
-                    required: ['title', 'description', 'estimatedMinutes'],
-                    additionalProperties: false,
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 2000,
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'task_breakdown_response',
+          strict: true,
+          schema: {
+            type: 'object',
+            properties: {
+              steps: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    title: { type: 'string' },
+                    description: { type: 'string' },
+                    estimatedMinutes: { type: 'number' },
                   },
+                  required: ['title', 'description', 'estimatedMinutes'],
+                  additionalProperties: false,
                 },
-                notesForUser: { type: 'string' },
               },
-              required: ['steps', 'notesForUser'],
-              additionalProperties: false,
+              notesForUser: { type: 'string' },
             },
+            required: ['steps', 'notesForUser'],
+            additionalProperties: false,
           },
         },
-      });
-      const responseText = completion.choices[0].message.content;
-      breakdownData = JSON.parse(responseText);
-    } catch (apiError) {
-      console.error('❌ [AI Task Breakdown] API Error:', apiError.message);
-      throw apiError;
-    }
-
-    console.log(`✅ [AI Task Breakdown] Generated ${breakdownData.steps?.length || 0} steps`);
-
+      },
+    });
+    const responseText = completion.choices[0].message.content;
+    const breakdownData = JSON.parse(responseText);
     res.json(breakdownData);
   } catch (error) {
     console.error('❌ [AI] Error:', error);
-
-    // Check if it's an OpenAI API error
     if (error.response) {
       return res.status(error.response.status || 500).json({
         error: 'OpenAI API error',
         message: error.response.data?.error?.message || error.message,
       });
     }
-
     res.status(500).json({
       error: 'Failed to break down task',
       message: error.message || 'An unexpected error occurred',
@@ -261,53 +312,38 @@ Break this task down into 3-10 clear, actionable steps.`;
 
 /**
  * POST /api/ai/companion
- * AI companion for reflection, emotional support, and time-management coaching
  */
 router.post('/companion', async (req, res) => {
   try {
     const { messages } = req.body;
-
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      return res.status(400).json({
-        error: 'Messages array is required',
-      });
+      return res.status(400).json({ error: 'Messages array is required' });
     }
-
-    // Check if OpenAI API key is configured
     if (!openai) {
       console.warn('⚠️  OpenAI API key not configured. Returning mock response.');
       return res.json({
-        reply: "I'm here to help you reflect on your day and manage your time better. (Mock response - OpenAI not configured)",
+        reply:
+          "I'm here to help you reflect on your day and manage your time better. (Mock response - OpenAI not configured)",
       });
     }
-
-    // Build system prompt
     const systemPrompt = `You are an AI companion inside a time-management app called FlowFocus.
-You are warm, encouraging, and non-judgmental.
-Use insights from time-management (time blocking, prioritization, Pomodoro, planning vs. review), self-determination theory, and humanistic psychology.
-Help the user reflect on their day, emotions, wins and struggles.
-Ask gentle follow-up questions, and give small, realistic suggestions.
-The user may speak Chinese or English; respond in the same language.
-You are **not** a therapist; do not give clinical/medical advice. If the user expresses extreme distress or self-harm thoughts, gently encourage them to seek professional help and talk to trusted friends/family.`;
+You are warm, encouraging, and non-judgmental (big-sister vibe). Always respond in English, even if the user writes in another language.
+Use insights from time-management, prioritization, Pomodoro, planning vs. review.
+Ask gentle follow-up questions, give small realistic suggestions.
+Do not give clinical/medical advice.`;
 
-    // Call OpenAI API using chat.completions.create (plain text response, no JSON schema)
-    let reply;
-    try {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          ...messages.map(m => ({ role: m.role, content: m.content })),
-        ],
-        temperature: 0.8,
-        max_tokens: 1000,
-      });
-      reply = completion.choices[0].message.content || 'I apologize, but I could not generate a response. Please try again.';
-    } catch (apiError) {
-      console.error('❌ [AI Companion] API Error:', apiError.message);
-      throw apiError;
-    }
-
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...messages.map((m) => ({ role: m.role, content: m.content })),
+      ],
+      temperature: 0.8,
+      max_tokens: 1000,
+    });
+    const reply =
+      completion.choices[0].message.content ||
+      'I apologize, but I could not generate a response. Please try again.';
     res.json({ reply });
   } catch (error) {
     console.error('❌ [AI Companion] Error:', error);
@@ -322,32 +358,9 @@ You are **not** a therapist; do not give clinical/medical advice. If the user ex
  * Generate mock planning response for development/testing
  */
 function generateMockPlanningResponse(messages) {
-  const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  return {
-    summary: 'Generated a plan with 3 tasks (mock data)',
-    notesForUser: 'This is mock data. Configure OPENAI_API_KEY to use real AI.',
-    tasks: [
-      {
-        title: 'Sample Task 1',
-        description: 'Sample task description',
-        priority: 'high',
-        status: 'todo',
-        estimatedMinutes: 120,
-        deadline: null,
-        linkToGoalId: null,
-        workTimeBlocks: [
-          {
-            date: tomorrow.toISOString().split('T')[0],
-            startTime: '09:00',
-            endTime: '11:00',
-          },
-        ],
-      },
-    ],
-  };
+  // 继续返回“需要更多上下文”的温柔提示，避免给出示例任务
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+  return buildNeedsContextResponse(lastUser?.content);
 }
 
 /**
@@ -376,29 +389,18 @@ function generateMockTaskBreakdown(taskTitle) {
   };
 }
 
-// Legacy endpoint: Keep /plan for backward compatibility, but it's deprecated
-// New code should use /planning
+// Legacy endpoint: /plan
 router.post('/plan', async (req, res) => {
   try {
-    // Transform legacy request format to new format
     const { userInput, existingTasks = [], conversationHistory = [] } = req.body;
-
     if (!userInput || userInput.trim() === '') {
-      return res.status(400).json({
-        error: 'User input is required',
-      });
+      return res.status(400).json({ error: 'User input is required' });
     }
-
-    // Convert to new format - create messages array
     const messages = [
       ...conversationHistory.map((m) => ({ role: m.role, content: m.content })),
       { role: 'user', content: userInput },
     ];
-    
-    // Call shared planning logic
     const planData = await handlePlanningRequest(messages);
-    
-    // Transform response to legacy format for backward compatibility
     res.json({
       message: planData.summary || 'Plan generated',
       tasks: planData.tasks || [],
@@ -413,4 +415,3 @@ router.post('/plan', async (req, res) => {
 });
 
 export default router;
-

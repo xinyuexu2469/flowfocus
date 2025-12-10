@@ -49,6 +49,7 @@ export const TaskDialog = ({ open, onOpenChange, onSuccess, editTask, parentTask
   const { toast } = useToast();
   const { calculateScheduledTime } = useDailyGanttStore();
   const [loading, setLoading] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [tagInput, setTagInput] = useState("");
   
@@ -583,6 +584,73 @@ export const TaskDialog = ({ open, onOpenChange, onSuccess, editTask, parentTask
     setLoading(false);
   };
 
+  const handleDelete = async () => {
+    if (!editTask?.id || isDeleting) return;
+    const confirmed = window.confirm("确定要删除这个任务吗？相关时间块也会一并移除。");
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    try {
+      // 记录相关日期，方便删除后刷新各视图
+      const datesToRefresh = new Set<string>();
+      if (editTask.planned_date) {
+        datesToRefresh.add(format(new Date(editTask.planned_date), "yyyy-MM-dd"));
+      }
+      const segmentsBeforeDelete = await loadTimeSegments(editTask.id);
+      segmentsBeforeDelete.forEach((seg) => {
+        const dateStr = seg.start_time ? seg.start_time.split("T")[0] : seg.date;
+        if (dateStr) datesToRefresh.add(dateStr);
+      });
+
+      await tasksApi.delete(editTask.id);
+      toast({ title: "已删除", description: "任务及其时间安排已移除。" });
+
+      // 刷新 Daily Gantt（逐日期）
+      try {
+        for (const dateStr of datesToRefresh) {
+          await useDailyGanttStore.getState().fetchSegmentsForDate(new Date(dateStr));
+        }
+      } catch (error) {
+        console.warn("Error refreshing daily gantt after delete:", error);
+      }
+
+      // 刷新 Calendar 事件（根据涉及的日期区间）
+      try {
+        if (datesToRefresh.size > 0) {
+          const sorted = Array.from(datesToRefresh).sort();
+          const startDate = new Date(sorted[0]);
+          const endDate = new Date(sorted[sorted.length - 1]);
+          startDate.setMonth(startDate.getMonth() - 1);
+          endDate.setMonth(endDate.getMonth() + 1);
+          const { useCalendarStore } = await import("@/stores/calendarStore");
+          await useCalendarStore.getState().fetchEvents(startDate, endDate);
+        }
+      } catch (error) {
+        console.warn("Error refreshing calendar after delete:", error);
+      }
+
+      // 刷新任务列表与时间块缓存
+      try {
+        const { useTaskStore } = await import("@/stores/taskStore");
+        await useTaskStore.getState().refreshSegments();
+        await useTaskStore.getState().fetchTasks();
+      } catch (error) {
+        console.warn("Error refreshing task store after delete:", error);
+      }
+
+      onSuccess(); // 让各调用方做自己的刷新
+      onOpenChange(false);
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "删除失败",
+        description: error.message || "请稍后再试。",
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   // Helper: Get the nearest whole hour from now
   // If current time is later than 23:00 (11pm), default to 00:00–01:00 on the next day
   // Otherwise, use the nearest full hour (round to nearest hour)
@@ -1082,13 +1150,26 @@ export const TaskDialog = ({ open, onOpenChange, onSuccess, editTask, parentTask
           )}
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
-            Cancel
-          </Button>
-          <Button onClick={handleSubmit} disabled={loading}>
-            {loading ? "Saving..." : editTask ? "Update Task" : "Create Task"}
-          </Button>
+        <DialogFooter className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {editTask && (
+              <Button
+                variant="destructive"
+                onClick={handleDelete}
+                disabled={loading || isDeleting}
+              >
+                {isDeleting ? "Deleting..." : "Delete"}
+              </Button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading || isDeleting}>
+              Cancel
+            </Button>
+            <Button onClick={handleSubmit} disabled={loading || isDeleting}>
+              {loading ? "Saving..." : editTask ? "Update Task" : "Create Task"}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

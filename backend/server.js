@@ -1,173 +1,115 @@
-// Focus Flow API Server
-// Backend server to connect to Neon Postgres database
-
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { ClerkExpressRequireAuth } from '@clerk/clerk-sdk-node';
 import { pool } from './db.js';
+
 import tasksRoutes from './routes/tasks.js';
 import timeSegmentsRoutes from './routes/timeSegments.js';
 import projectsRoutes from './routes/projects.js';
 import goalsRoutes from './routes/goals.js';
 import aiRoutes from './routes/ai.js';
 import googleCalendarRoutes from './routes/googleCalendar.js';
+// 如需 auth 路由可自行启用：
+// import authRoutes from './routes/auth.js';
 
-// Load environment variables
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Middleware
-// Enable CORS for dev frontend with credentials (allow 8080 / 8081 / 8082)
+// 如果未配置 Clerk 密钥，则放行（便于本地/开发调试）
+const clerkAuth = process.env.CLERK_SECRET_KEY
+  ? ClerkExpressRequireAuth()
+  : (req, res, next) => next();
+
+// 允许的前端来源（本地与 Codespaces 公网域名）
 const allowedOrigins = [
   'http://localhost:8080',
   'http://localhost:8081',
   'http://localhost:8082',
+  'http://localhost:8083',
+  'https://expert-carnival-wrjqvqj75j77h9w4v-8080.app.github.dev',
+  'https://expert-carnival-wrjqvqj75j77h9w4v-8081.app.github.dev',
+  'https://expert-carnival-wrjqvqj75j77h9w4v-8082.app.github.dev',
+  'https://expert-carnival-wrjqvqj75j77h9w4v-8083.app.github.dev',
 ];
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow same-origin or no-origin (e.g., curl/Postman) and the dev frontends
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-}));
-app.use(express.json()); // Parse JSON request bodies
 
-// Clerk authentication middleware helper
-// This extracts userId from Clerk's req.auth and makes it available to routes
-const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY;
+// CORS 配置
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // 允许无 Origin（如 curl/健康检查）
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  })
+);
+// 预检
+app.options('*', cors());
 
-// Development mode: If no CLERK_SECRET_KEY, use a test user
-// WARNING: Only use this for local development!
-const DEV_MODE = !CLERK_SECRET_KEY;
-let devTestUserId = null; // Will be set on first request
+app.use(express.json());
 
-// Helper function to get or create test user in development mode
-async function getOrCreateDevTestUser() {
-  if (devTestUserId) {
-    return devTestUserId;
-  }
-  
+// 根路径说明
+app.get('/', (req, res) => {
+  res.json({
+    name: 'FlowFocus API',
+    version: '1.0.0',
+    status: 'running',
+    endpoints: {
+      health: '/api/health',
+      tasks: '/api/tasks',
+      ai: '/api/ai',
+      goals: '/api/goals',
+      projects: '/api/projects',
+      timeSegments: '/api/time-segments',
+      googleCalendar: '/api/google-calendar',
+    },
+  });
+});
+
+// 健康检查
+app.get('/api/health', async (req, res) => {
   try {
-    // Check if test user exists
-    const result = await pool.query(
-      "SELECT id FROM public.users WHERE email = 'dev@test.local' LIMIT 1"
-    );
-    
-    if (result.rows.length > 0) {
-      devTestUserId = result.rows[0].id;
-      return devTestUserId;
-    }
-    
-    // Create test user
-    const insertResult = await pool.query(
-      `INSERT INTO public.users (email, full_name, created_at, updated_at)
-       VALUES ('dev@test.local', 'Development Test User', NOW(), NOW())
-       RETURNING id`
-    );
-    
-    devTestUserId = insertResult.rows[0].id;
-    console.log(`✅ Created development test user: ${devTestUserId}`);
-    return devTestUserId;
-  } catch (error) {
-    console.error('❌ Error creating test user:', error);
-    throw error;
-  }
-}
-
-if (DEV_MODE) {
-  console.warn('⚠️  WARNING: Running in DEVELOPMENT MODE (no Clerk authentication)');
-  console.warn('⚠️  This should only be used for local development!');
-  console.warn('⚠️  To enable authentication, add CLERK_SECRET_KEY to backend/.env');
-}
-
-const requireAuth = CLERK_SECRET_KEY ? ClerkExpressRequireAuth() : null;
-const clerkAuth = async (req, res, next) => {
-  if (DEV_MODE) {
-    // Development mode: Get or create test user
-    try {
-      const testUserId = await getOrCreateDevTestUser();
-      req.userId = testUserId;
-      req.auth = { userId: testUserId };
-      next();
-    } catch (error) {
-      console.error('❌ Development mode error:', error);
-      res.status(500).json({ error: 'Failed to initialize development user' });
-    }
-  } else {
-    // Production mode: Use Clerk authentication
-    requireAuth(req, res, () => {
-      req.userId = req.auth?.userId;
-      next();
+    const result = await pool.query('SELECT NOW() as now');
+    res.json({
+      status: 'ok',
+      database: 'connected',
+      time: result.rows[0].now,
+    });
+  } catch (err) {
+    console.error('DB health check error:', err.message);
+    res.status(500).json({
+      status: 'error',
+      database: 'disconnected',
+      message: err.message,
     });
   }
-};
-
-// Health check endpoint (with timeout to prevent hanging)
-app.get('/api/health', async (req, res) => {
-  // Set a timeout for the response
-  const timeout = setTimeout(() => {
-    if (!res.headersSent) {
-      res.status(503).json({ 
-        status: 'timeout', 
-        database: 'connection_timeout',
-        message: 'Database connection is taking too long. The database might be idle.'
-      });
-    }
-  }, 5000); // 5 second timeout
-
-  try {
-    // Try to query with a shorter timeout
-    const queryPromise = pool.query('SELECT NOW()');
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Query timeout')), 3000)
-    );
-    
-    const result = await Promise.race([queryPromise, timeoutPromise]);
-    clearTimeout(timeout);
-    
-    if (!res.headersSent) {
-      res.json({ 
-        status: 'ok', 
-        database: 'connected',
-        time: result.rows[0].now 
-      });
-    }
-  } catch (error) {
-    clearTimeout(timeout);
-    if (!res.headersSent) {
-      res.status(503).json({ 
-        status: 'error', 
-        database: 'disconnected',
-        error: error.message,
-        tip: 'Try running a query in Neon SQL Editor to wake up the database, or use Direct connection instead of Pooler'
-      });
-    }
-  }
 });
 
-// Public routes (no authentication required)
-app.get('/api/health', async (req, res) => {
-  // Health check remains public
-});
-
-// Protected API Routes (require Clerk authentication)
+// 受保护的业务路由
 app.use('/api/tasks', clerkAuth, tasksRoutes);
 app.use('/api/time-segments', clerkAuth, timeSegmentsRoutes);
 app.use('/api/projects', clerkAuth, projectsRoutes);
 app.use('/api/goals', clerkAuth, goalsRoutes);
 app.use('/api/ai', clerkAuth, aiRoutes);
 app.use('/api/google-calendar', clerkAuth, googleCalendarRoutes);
+// 如果需要 auth 路由：
+// app.use('/api/auth', authRoutes);
 
-// Start server
+// 全局错误处理（含 CORS）
+app.use((err, req, res, next) => {
+  if (err?.message === 'Not allowed by CORS') {
+    return res.status(403).json({ error: 'CORS blocked', origin: req.headers.origin });
+  }
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
 });
-
