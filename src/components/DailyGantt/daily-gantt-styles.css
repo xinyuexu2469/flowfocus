@@ -1,0 +1,19 @@
+.unified-daily-gantt {
+  width: 100%;
+  height: 100%;
+}
+
+.unified-timeline-panel {
+  width: 100%;
+  height: 100%;
+}
+
+.unified-timeline-panel .timeline-row {
+  position: relative;
+  min-height: 48px;
+}
+
+.unified-timeline-panel .hour-grid-line {
+  border-left: 1px solid rgba(148, 163, 184, 0.4);
+}
+
