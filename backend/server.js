@@ -17,23 +17,42 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const allowDevNoAuth = process.env.ALLOW_DEV_NO_AUTH === '1' || NODE_ENV !== 'production';
 
-// 如果未配置 Clerk 密钥，则放行（便于本地/开发调试）
-const clerkAuth = process.env.CLERK_SECRET_KEY
-  ? ClerkExpressRequireAuth()
-  : (req, res, next) => next();
+// Clerk 身份验证：支持开发跳过（ALLOW_DEV_NO_AUTH=1 或非生产环境）
+const hasClerkKeys = Boolean(process.env.CLERK_SECRET_KEY);
+const clerkAuth = hasClerkKeys && !allowDevNoAuth ? ClerkExpressRequireAuth() : (req, res, next) => next();
 
-// 允许的前端来源（本地与 Codespaces 公网域名）
-const allowedOrigins = [
+if (hasClerkKeys && allowDevNoAuth) {
+  console.warn('⚠️  Clerk auth bypassed (dev mode or ALLOW_DEV_NO_AUTH=1).');
+}
+
+// 允许的前端来源（本地、环境变量、自适应 Codespaces 域名）
+const defaultAllowedOrigins = [
   'http://localhost:8080',
   'http://localhost:8081',
   'http://localhost:8082',
   'http://localhost:8083',
-  'https://expert-carnival-wrjqvqj75j77h9w4v-8080.app.github.dev',
-  'https://expert-carnival-wrjqvqj75j77h9w4v-8081.app.github.dev',
-  'https://expert-carnival-wrjqvqj75j77h9w4v-8082.app.github.dev',
-  'https://expert-carnival-wrjqvqj75j77h9w4v-8083.app.github.dev',
 ];
+
+if (process.env.FRONTEND_URL) {
+  defaultAllowedOrigins.push(process.env.FRONTEND_URL);
+}
+
+const codespaceName = process.env.CODESPACE_NAME;
+if (codespaceName) {
+  [8080, 8081, 8082, 8083].forEach((port) => {
+    defaultAllowedOrigins.push(`https://${codespaceName}-${port}.app.github.dev`);
+  });
+}
+
+const extraOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const allowedOrigins = [...new Set([...defaultAllowedOrigins, ...extraOrigins])];
 
 // CORS 配置
 app.use(
