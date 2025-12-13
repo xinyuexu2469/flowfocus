@@ -234,7 +234,8 @@ export const KanbanView = () => {
           console.log(`[KANBAN] ❌ Task has no planned_date and no segments, excluding`);
           return false;
         }
-        const taskDate = format(new Date(task.planned_date), "yyyy-MM-dd");
+        // Use planned_date's date directly (should already be YYYY-MM-DD format)
+        const taskDate = task.planned_date.slice(0, 10);
         const inRange = taskDate >= startDate && taskDate <= endDate;
         console.log(`[KANBAN] ${inRange ? '✅' : '❌'} No segments, checking planned_date: ${taskDate}`);
         return inRange;
@@ -242,7 +243,8 @@ export const KanbanView = () => {
 
       // If task has segments, include if ANY segment date is in range
       const hasSegmentInRange = taskSegments.some((seg) => {
-        const segDate = format(new Date(seg.date), "yyyy-MM-dd");
+        // Use start_time's date (ISO prefix) instead of the date field to avoid timezone issues
+        const segDate = seg.start_time.slice(0, 10); // Extract YYYY-MM-DD from ISO string
         return segDate >= startDate && segDate <= endDate;
       });
       console.log(`[KANBAN] ${hasSegmentInRange ? '✅' : '❌'} Has segments, checking segment dates`);
