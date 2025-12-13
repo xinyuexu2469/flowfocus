@@ -44,55 +44,46 @@ export const useCalendarStore = create<CalendarStore>((set, get) => ({
     try {
       const api = getApiClient();
 
-      // Fetch time segments (unified with Daily Gantt)
-      // Get all segments in the date range
-      const startStr = format(start, 'yyyy-MM-dd');
-      const endStr = format(end, 'yyyy-MM-dd');
-      
-      // Fetch segments for each day in range (simplified - could be optimized)
-      const allSegments: any[] = [];
+      // Fetch segments for all days in range in PARALLEL (not sequential)
+      const dateRange: string[] = [];
       const currentDate = new Date(start);
       while (currentDate <= end) {
-        try {
-          const dateStr = format(currentDate, 'yyyy-MM-dd');
-          const segments = await api.timeSegments.getByDate(dateStr) as any[];
+        dateRange.push(format(currentDate, 'yyyy-MM-dd'));
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+
+      // Parallel fetch all dates at once (much faster)
+      const results = await Promise.allSettled(
+        dateRange.map(dateStr => api.timeSegments.getByDate(dateStr))
+      );
+
+      const allSegments: any[] = [];
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          const segments = result.value as any[];
           allSegments.push(...segments.filter(s => !s.deleted_at));
-          currentDate.setDate(currentDate.getDate() + 1);
-        } catch (error) {
-          // Skip days with errors
-          currentDate.setDate(currentDate.getDate() + 1);
         }
+        // Ignore failed dates
       }
 
-      // Filter by time range and fetch task data
-      const events: CalendarEvent[] = [];
-      for (const segment of allSegments) {
-        const segmentStart = new Date(segment.start_time);
-        if (segmentStart >= start && segmentStart <= end) {
-          // Fetch task if task_id exists
-          let task = null;
-          if (segment.task_id) {
-            try {
-              task = await api.tasks.getById(segment.task_id);
-            } catch (error) {
-              // Task not found, continue without task data
-            }
-          }
-
-          events.push({
-            id: segment.id,
-            taskId: segment.task_id || undefined,
-            googleEventId: segment.google_calendar_event_id || undefined,
-            title: segment.title || task?.title || 'Untitled',
-            description: segment.description || segment.notes || task?.description || undefined,
-            startTime: new Date(segment.start_time),
-            endTime: new Date(segment.end_time),
-            allDay: false,
-            location: undefined, // time_segments doesn't have location field
-            source: segment.source || 'app',
-          });
-        }
-      }
+      // Build events without fetching individual tasks (use segment.title)
+      const events: CalendarEvent[] = allSegments
+        .filter(segment => {
+          const segmentStart = new Date(segment.start_time);
+          return segmentStart >= start && segmentStart <= end;
+        })
+        .map(segment => ({
+          id: segment.id,
+          taskId: segment.task_id || undefined,
+          googleEventId: segment.google_calendar_event_id || undefined,
+          title: segment.title || 'Untitled',
+          description: segment.description || segment.notes || undefined,
+          startTime: new Date(segment.start_time),
+          endTime: new Date(segment.end_time),
+          allDay: false,
+          location: undefined,
+          source: segment.source || 'app',
+        }));
 
       // Sort by start time
       events.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
