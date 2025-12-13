@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { SignedIn, SignedOut, RedirectToSignIn } from "@clerk/clerk-react";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
+import ClerkSSOCallback from "./pages/ClerkSSOCallback";
 import Dashboard from "./pages/Dashboard";
 import CalendarSettings from "./pages/CalendarSettings";
 import GoogleCalendarCallback from "./pages/GoogleCalendarCallback";
@@ -21,6 +22,12 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
+
+          {/* Clerk SSO callback routes (must not render SignIn/SignUp directly) */}
+          <Route path="/auth/sign-in/sso-callback" element={<ClerkSSOCallback />} />
+          <Route path="/auth/sign-up/sso-callback" element={<ClerkSSOCallback />} />
+          <Route path="/auth/sso-callback" element={<ClerkSSOCallback />} />
+
           <Route path="/auth" element={<Auth />} />
           <Route path="/auth/*" element={<Auth />} />
           <Route 
