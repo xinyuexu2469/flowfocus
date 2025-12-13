@@ -73,7 +73,7 @@ export const AIPlanningAssistant = ({
         id: "welcome",
         role: "assistant",
         content:
-          "Hi there! I’m your planning buddy—warm and gentle like a big sister. Tell me what you want to do today/this week and any deadlines or fixed events. If you’re not sure yet, I can show a tiny example and ask a few gentle questions so we can plan based on your situation.",
+          "Hello! I'm your AI Planning Assistant 🤖\n\nPlease tell me all the tasks and situations you need to handle, and I'll help you generate a complete task list and time schedule.\n\nFor example:\n\"Next week I need to prepare for final exams, including CS101, Math, and Physics. The CS101 exam is on Friday, and I also need to complete a programming assignment. There's a group meeting on Wednesday at 3 PM. I want to reserve 2 hours each day for exercise and rest.\"",
         timestamp: new Date(),
       };
       setMessages([welcomeMessage]);
@@ -118,6 +118,10 @@ export const AIPlanningAssistant = ({
     try {
       const getToken = getClerkTokenGetter();
       const token = getToken ? await getToken() : null;
+      
+      // Auto-detect user timezone
+      const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      
       const response = await fetch(`${API_BASE_URL}/ai/planning`, {
         method: "POST",
         headers: {
@@ -131,6 +135,7 @@ export const AIPlanningAssistant = ({
             role: m.role,
             content: m.content,
           })),
+          timezone: userTimezone,
         }),
       });
 
@@ -264,16 +269,17 @@ export const AIPlanningAssistant = ({
         taskIdMap.set(plannedTask.id, createdTask.id);
 
         // Create time segments for this task
+        const toUtcIso = (dateStr: string, hhmm: string) => `${dateStr}T${hhmm}:00Z`;
         for (const timeBlock of plannedTask.timeBlocks) {
           const blockDate = timeBlock.date || firstBlockDate;
-          const startDateTime = new Date(`${blockDate}T${timeBlock.startTime}:00`);
-          const endDateTime = new Date(`${blockDate}T${timeBlock.endTime}:00`);
-          
+          const startIso = toUtcIso(blockDate, timeBlock.startTime);
+          const endIso = toUtcIso(blockDate, timeBlock.endTime);
+
           await timeSegmentsApi.create({
             task_id: createdTask.id,
             date: blockDate,
-            start_time: startDateTime.toISOString(),
-            end_time: endDateTime.toISOString(),
+            start_time: startIso,
+            end_time: endIso,
             title: plannedTask.title,
             title_is_custom: false,
             source: "task",

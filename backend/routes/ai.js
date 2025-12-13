@@ -1,15 +1,18 @@
 import express from 'express';
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 const router = express.Router();
 
 // Initialize OpenAI client (shared)
-export const openai = process.env.OPENAI_API_KEY
-  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  : null;
+const openaiApiKey = process.env.OPENAI_API_KEY?.trim();
+export const openai = openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : null;
 
 // Build a warm, non-intrusive response when context is insufficient or OpenAI is not configured
 function buildNeedsContextResponse(lastUserContent = '') {
@@ -45,18 +48,43 @@ async function handlePlanningRequest(messages) {
   }
 
   // Build system prompt (include current date/time to anchor schedules)
-  const nowIso = new Date().toISOString();
-  const currentDate = nowIso.split('T')[0];
-  const currentTime = nowIso.split('T')[1].slice(0, 5);
+  // Use user's timezone if provided, otherwise default to UTC
+  const userTimezone = messages[0]?.timezone || 'UTC';
+  const nowUtc = new Date();
+  const nowUserLocal = new Date(nowUtc.toLocaleString('en-US', { timeZone: userTimezone }));
+  const currentDate = nowUserLocal.toISOString().split('T')[0];
+  const currentTime = nowUserLocal.toTimeString().slice(0, 5);
+  const currentHour = parseInt(currentTime.split(':')[0], 10);
+  const dayOfWeek = nowUserLocal.toLocaleDateString('en-US', { weekday: 'long', timeZone: userTimezone });
 
   const systemPrompt = `You are an expert time-management and scheduling assistant inside an app called FlowFocus.
 Always respond in English, warm and conversational like a caring older sister (gentle, not pushy).
 Always base your planning on what the user said in this conversation.
-If details are insufficient, you may offer a very short illustrative example clearly labeled as "example", but do NOT treat it as the user's tasks. Prefer to ask for their tasks, deadlines, class/meeting times, working hours, and constraints. Be soft and encouraging, never pushy.
-Only produce a task list and time-blocked schedule when enough details are present.
-Current date: ${currentDate}
-Current time (24h): ${currentTime}
-Unless the user specifies otherwise, assume they are planning for today (${currentDate}) and the next few days.
+
+**CRITICAL - Current Time Context:**
+User's timezone: ${userTimezone}
+User's current local date: ${currentDate}
+User's current local time (24h): ${currentTime}
+Current day of week: ${dayOfWeek}
+
+**IMPORTANT**: When the user says "today", they mean ${currentDate} (${dayOfWeek}) in their timezone.
+When scheduling tasks:
+- Start time blocks from the current time (${currentTime}) onwards
+- If it's late evening (after 20:00) and deadline is today, fit urgent tasks in remaining hours tonight
+- If deadline is "today" or "tonight", schedule on ${currentDate}, NOT the next day
+- Respect the user's current time context - don't schedule tasks in the past
+
+**IMPORTANT - Example Request Handling:**
+If the user asks for an "example" or says they need to see an example (words like "example", "show me", "demo", etc.), provide a COMPLETE illustrative example with:
+- 3-5 sample tasks (e.g., "Study for CS101 Exam", "Complete Math Homework", "Group Project Meeting")
+- Realistic time blocks spread across 2-3 days
+- Clear deadlines and priorities
+- A friendly summary explaining this is just an example to inspire them
+
+If details are insufficient and they are NOT asking for an example, ask for their tasks, deadlines, class/meeting times, working hours, and constraints. Be soft and encouraging, never pushy.
+Only produce a task list and time-blocked schedule when enough details are present OR when user explicitly requests an example.
+
+Unless the user specifies otherwise, assume they are planning starting from the current time and the next few days.
 Keep suggested time blocks aligned to the current date/time context.
 
 For each task, extract:
@@ -209,8 +237,12 @@ router.post('/chat', async (req, res) => {
  */
 router.post('/planning', async (req, res) => {
   try {
-    const { messages } = req.body;
-    const planData = await handlePlanningRequest(messages);
+    const { messages, timezone } = req.body;
+    // Attach timezone to messages for handlePlanningRequest
+    const messagesWithTimezone = messages.map((m, i) => 
+      i === 0 ? { ...m, timezone } : m
+    );
+    const planData = await handlePlanningRequest(messagesWithTimezone);
     res.json(planData);
   } catch (error) {
     console.error('❌ [AI Planning] Error:', error);

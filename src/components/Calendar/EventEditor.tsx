@@ -102,6 +102,13 @@ export const EventEditor: React.FC<EventEditorProps> = ({
     onOpenChange(false);
   };
 
+  const handleDelete = async () => {
+    if (onDelete) {
+      await onDelete();
+      onOpenChange(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
@@ -276,7 +283,7 @@ export const EventEditor: React.FC<EventEditorProps> = ({
           {/* Actions */}
           <DialogFooter className="gap-2">
             {onDelete && event?.id && (
-              <Button type="button" variant="destructive" onClick={onDelete}>
+              <Button type="button" variant="destructive" onClick={handleDelete}>
                 Delete
               </Button>
             )}

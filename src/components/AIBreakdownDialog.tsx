@@ -167,6 +167,22 @@ export const AIBreakdownDialog = ({
     setLoading(true);
 
     try {
+      const toISODate = (value: any): string | null => {
+        if (!value) return null;
+        if (typeof value === 'string') return value.slice(0, 10);
+        try {
+          return new Date(value).toISOString().slice(0, 10);
+        } catch {
+          return null;
+        }
+      };
+
+      const today = new Date().toISOString().slice(0, 10);
+      const inheritedPlannedDate =
+        toISODate((parentTask as any)?.planned_date) ||
+        toISODate((parentTask as any)?.deadline) ||
+        today;
+
       // Get max order for existing subtasks if parent exists
       let maxOrder = -1;
       if (parentTask?.id) {
@@ -204,6 +220,7 @@ export const AIBreakdownDialog = ({
             tags: subtask.tags || [],
             status: "todo" as const,
             parent_task_id: parentTask?.id || null,
+            planned_date: inheritedPlannedDate,
             deadline: parentTask?.deadline || null, // Inherit parent's deadline if exists
             order: maxOrder + arrayIndex + 1,
           };

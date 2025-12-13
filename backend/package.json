@@ -6,7 +6,13 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "dev:bg": "sh -c \"nohup node --watch server.js > /tmp/flowfocus-backend-dev.log 2>&1 & echo $! > /tmp/flowfocus-backend-dev.pid && echo Backend started:$(cat /tmp/flowfocus-backend-dev.pid)\"",
+    "dev:stop": "sh -c \"if [ -f /tmp/flowfocus-backend-dev.pid ]; then kill $(cat /tmp/flowfocus-backend-dev.pid) 2>/dev/null || true; rm -f /tmp/flowfocus-backend-dev.pid; fi; pkill -f 'node --watch server.js' 2>/dev/null || true; pkill -f 'node server.js' 2>/dev/null || true; echo Backend stopped\"",
+    "db:schema": "node scripts/migrate.js schema",
+    "db:gc": "node scripts/migrate.js gc",
+    "db:prd": "node scripts/migrate.js prd",
+    "db:init": "node scripts/migrate.js init"
   },
   "dependencies": {
     "@clerk/clerk-sdk-node": "^5.1.6",

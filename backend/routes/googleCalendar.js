@@ -25,7 +25,11 @@ router.get('/auth/url', (req, res) => {
 // OAuth 回调处理 - 接收前端发来的授权码
 router.post('/auth/callback', async (req, res) => {
   const { code } = req.body;
-  const userId = req.auth.userId; // 从 Clerk 获取
+  const userId = req.auth?.userId; // 从 Clerk 获取
+
+  if (!userId) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
   
   if (!code) {
     return res.status(400).json({ error: 'Authorization code is required' });
@@ -37,19 +41,22 @@ router.post('/auth/callback', async (req, res) => {
     
     // 存储 tokens（加密存储，这里简化）
     await pool.query(`
-      INSERT INTO google_calendar_tokens (user_id, access_token, refresh_token, expires_at)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO google_calendar_tokens (user_id, access_token, refresh_token, token_expiry, calendar_id, sync_enabled)
+      VALUES ($1, $2, $3, $4, $5, true)
       ON CONFLICT (user_id) 
       DO UPDATE SET 
         access_token = $2,
         refresh_token = $3,
-        expires_at = $4,
+        token_expiry = $4,
+        calendar_id = $5,
+        sync_enabled = true,
         updated_at = NOW()
     `, [
       userId,
       tokens.access_token,
       tokens.refresh_token,
-      new Date(tokens.expiry_date)
+      tokens.expiry_date ? new Date(tokens.expiry_date) : null,
+      'primary'
     ]);
     
     res.json({ success: true });
@@ -61,11 +68,14 @@ router.post('/auth/callback', async (req, res) => {
 
 // 检查连接状态
 router.get('/auth/status', async (req, res) => {
-  const userId = req.auth.userId;
+  const userId = req.auth?.userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
   
   try {
     const result = await pool.query(
-      'SELECT access_token, expires_at FROM google_calendar_tokens WHERE user_id = $1',
+      'SELECT access_token, token_expiry FROM google_calendar_tokens WHERE user_id = $1',
       [userId]
     );
     
@@ -74,20 +84,27 @@ router.get('/auth/status', async (req, res) => {
     }
     
     const token = result.rows[0];
-    const isExpired = new Date(token.expires_at) < new Date();
+    const isExpired = token.token_expiry ? new Date(token.token_expiry) < new Date() : false;
     
     res.json({ 
       connected: true,
       needsRefresh: isExpired
     });
   } catch (error) {
+    // 迁移未执行时，避免把整个前端初始化打崩
+    if (error?.code === '42P01' || String(error?.message || '').includes('google_calendar_tokens')) {
+      return res.json({ connected: false });
+    }
     res.status(500).json({ error: error.message });
   }
 });
 
 // 断开连接
 router.post('/auth/disconnect', async (req, res) => {
-  const userId = req.auth.userId;
+  const userId = req.auth?.userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
   
   try {
     // 删除 tokens
@@ -111,7 +128,10 @@ router.post('/auth/disconnect', async (req, res) => {
 
 // 同步 Google Calendar 事件
 router.post('/sync', async (req, res) => {
-  const userId = req.auth.userId;
+  const userId = req.auth?.userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
   
   try {
     // 1. 获取用户的 tokens
@@ -200,7 +220,7 @@ router.post('/sync', async (req, res) => {
     
     // 6. 更新同步时间
     await pool.query(
-      'UPDATE google_calendar_tokens SET last_sync_at = NOW() WHERE user_id = $1',
+      'UPDATE google_calendar_tokens SET last_sync = NOW() WHERE user_id = $1',
       [userId]
     );
     
@@ -212,17 +232,23 @@ router.post('/sync', async (req, res) => {
     
   } catch (error) {
     console.error('Sync error:', error);
+    if (error?.code === '42P01' || String(error?.message || '').includes('google_calendar_tokens')) {
+      return res.status(503).json({ error: 'Google Calendar not initialized. Run DB migrations.' });
+    }
     res.status(500).json({ error: error.message });
   }
 });
 
 // 获取同步状态
 router.get('/sync/status', async (req, res) => {
-  const userId = req.auth.userId;
+  const userId = req.auth?.userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
   
   try {
     const result = await pool.query(
-      'SELECT last_sync_at FROM google_calendar_tokens WHERE user_id = $1',
+      'SELECT last_sync FROM google_calendar_tokens WHERE user_id = $1',
       [userId]
     );
     
@@ -230,8 +256,11 @@ router.get('/sync/status', async (req, res) => {
       return res.json({ lastSync: null });
     }
     
-    res.json({ lastSync: result.rows[0].last_sync_at });
+    res.json({ lastSync: result.rows[0].last_sync });
   } catch (error) {
+    if (error?.code === '42P01' || String(error?.message || '').includes('google_calendar_tokens')) {
+      return res.json({ lastSync: null });
+    }
     res.status(500).json({ error: error.message });
   }
 });

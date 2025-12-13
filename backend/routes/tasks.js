@@ -313,6 +313,7 @@ router.delete('/:id', async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
+    // Soft delete the task
     const result = await query(
       `UPDATE tasks 
        SET deleted_at = NOW(), updated_at = NOW()
@@ -324,6 +325,14 @@ router.delete('/:id', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Task not found or access denied' });
     }
+
+    // Also soft delete all associated time segments to keep Calendar in sync
+    await query(
+      `UPDATE time_segments 
+       SET deleted_at = NOW(), updated_at = NOW()
+       WHERE task_id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+      [id, userId]
+    );
 
     res.json({ message: 'Task deleted successfully', id: result.rows[0].id });
   } catch (error) {
