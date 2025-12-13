@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { ClerkExpressRequireAuth } from '@clerk/clerk-sdk-node';
 import { pool } from './db.js';
+import crypto from 'crypto';
 
 import tasksRoutes from './routes/tasks.js';
 import timeSegmentsRoutes from './routes/timeSegments.js';
@@ -24,6 +25,89 @@ const PORT = process.env.PORT || 4000;
 const allowDevNoAuth = process.env.ALLOW_DEV_NO_AUTH === '1';
 const DEV_USER_ID = process.env.DEV_USER_ID || '00000000-0000-0000-0000-000000000001';
 
+const DEFAULT_USER_ID_NAMESPACE_UUID = '6f5b3c6f-7cf0-4f6c-8d8c-7c7c10b5e6d1';
+
+function isUuid(value) {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function uuidToBytes(uuid) {
+  const hex = uuid.replace(/-/g, '');
+  return Buffer.from(hex, 'hex');
+}
+
+function bytesToUuid(buf) {
+  const hex = Buffer.from(buf).toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+// RFC4122 UUIDv5 implementation (SHA-1), to deterministically map Clerk user IDs to UUID.
+function uuidv5(name, namespaceUuid) {
+  const namespaceBytes = uuidToBytes(namespaceUuid);
+  const nameBytes = Buffer.from(String(name), 'utf8');
+  const hash = crypto.createHash('sha1').update(Buffer.concat([namespaceBytes, nameBytes])).digest();
+
+  const bytes = Buffer.from(hash.subarray(0, 16));
+  // Set version to 5
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  // Set variant to RFC4122
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  return bytesToUuid(bytes);
+}
+
+function getUserIdNamespaceUuid() {
+  const envValue = process.env.USER_ID_NAMESPACE_UUID || process.env.CLERK_USER_ID_NAMESPACE_UUID;
+  if (envValue && isUuid(envValue)) return envValue;
+  return DEFAULT_USER_ID_NAMESPACE_UUID;
+}
+
+function mapExternalUserIdToUuid(externalUserId) {
+  if (!externalUserId) return null;
+  if (isUuid(externalUserId)) return externalUserId;
+  return uuidv5(externalUserId, getUserIdNamespaceUuid());
+}
+
+function extractEmailFromClaims(claims) {
+  if (!claims || typeof claims !== 'object') return null;
+  return (
+    claims.email ||
+    claims.email_address ||
+    claims.primary_email_address ||
+    claims.primaryEmailAddress ||
+    null
+  );
+}
+
+async function ensureUserRow({ userIdUuid, clerkUserId, claims }) {
+  if (!userIdUuid) return;
+  // public.users.email is NOT NULL; when email isn't available in JWT claims, use a stable synthetic value.
+  const emailFromClaims = extractEmailFromClaims(claims);
+  const email = emailFromClaims || `clerk_${clerkUserId || userIdUuid}@local.invalid`;
+  const fullName = (claims && (claims.name || claims.full_name || claims.fullName)) || null;
+
+  try {
+    await pool.query(
+      `INSERT INTO public.users (id, email, full_name)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (id) DO NOTHING`,
+      [userIdUuid, email, fullName]
+    );
+  } catch (err) {
+    // If email collides (unique constraint), fall back to UUID-based synthetic email.
+    if (String(err?.code) === '23505') {
+      const fallbackEmail = `clerk_${userIdUuid}@local.invalid`;
+      await pool.query(
+        `INSERT INTO public.users (id, email, full_name)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (id) DO NOTHING`,
+        [userIdUuid, fallbackEmail, fullName]
+      );
+      return;
+    }
+    throw err;
+  }
+}
+
 const baseClerkAuth = process.env.CLERK_SECRET_KEY && !allowDevNoAuth
   ? ClerkExpressRequireAuth()
   : null;
@@ -33,15 +117,29 @@ const clerkAuth = process.env.CLERK_SECRET_KEY && !allowDevNoAuth
   ? ((req, res, next) => {
       return baseClerkAuth(req, res, (err) => {
         if (err) return next(err);
-        // 统一注入给各路由使用（不少路由依赖 req.userId）
-        req.userId = req.auth?.userId;
-        next();
+        // Clerk userId is NOT a UUID (e.g. user_...). Our DB uses UUID user_id.
+        // Map it deterministically so all tables continue to use UUIDs.
+        const clerkUserId = req.auth?.userId;
+        const userIdUuid = mapExternalUserIdToUuid(clerkUserId);
+
+        req.clerkUserId = clerkUserId;
+        req.userId = userIdUuid;
+        if (req.auth) req.auth.userId = userIdUuid;
+
+        ensureUserRow({
+          userIdUuid,
+          clerkUserId,
+          claims: req.auth?.sessionClaims,
+        })
+          .then(() => next())
+          .catch(next);
       });
     })
   : ((req, res, next) => {
       // 兼容路由对 req.auth.userId 与 req.userId 的依赖（开发/未接入 Clerk 时）
       req.auth = req.auth || { userId: DEV_USER_ID };
       req.userId = req.userId || DEV_USER_ID;
+      req.clerkUserId = req.clerkUserId || req.auth.userId;
       next();
     });
 
