@@ -11,9 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { format, parseISO } from "date-fns";
 import { useDailyGanttStore } from "@/stores/dailyGanttStore";
 import { useTaskStore } from "@/stores/taskStore";
-import { tasksApi, timeSegmentsApi } from "@/lib/api";
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+import { API_BASE_URL, tasksApi, timeSegmentsApi } from "@/lib/api";
 
 interface Message {
   id: string;
@@ -189,7 +187,7 @@ export const AIPlanningAssistant = ({
       // 提供更详细的错误信息
       let userFriendlyError = errorMsg;
       if (errorMsg.includes("Failed to fetch") || errorMsg.includes("NetworkError")) {
-        userFriendlyError = "无法连接到服务器。请检查后端服务器是否在运行 (http://localhost:4000)";
+        userFriendlyError = `无法连接到服务器。请检查后端服务是否可访问（当前 API：${API_BASE_URL}）`;
       }
       
       const errorMessage: Message = {
