@@ -24,7 +24,15 @@ function ClerkInit() {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ClerkProvider publishableKey={PUBLISHABLE_KEY} afterSignOutUrl="/">
+    <ClerkProvider
+      publishableKey={PUBLISHABLE_KEY}
+      // Align Clerk redirects with our app routes
+      signInUrl="/auth/sign-in"
+      signUpUrl="/auth/sign-up"
+      afterSignInUrl="/dashboard"
+      afterSignUpUrl="/dashboard"
+      afterSignOutUrl="/auth/sign-in"
+    >
       <ClerkInit />
     </ClerkProvider>
   </StrictMode>

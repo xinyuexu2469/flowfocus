@@ -10,7 +10,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { tasksApi } from "@/lib/api";
+import { API_BASE_URL, tasksApi } from "@/lib/api";
 import { Loader2, Sparkles, Plus } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -73,7 +73,6 @@ export const AIBreakdownDialog = ({
     setLoading(true);
 
     try {
-      const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
       const { getClerkTokenGetter } = await import('@/lib/clerk-api');
       const getToken = getClerkTokenGetter();
       const token = getToken ? await getToken() : null;

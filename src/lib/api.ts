@@ -3,7 +3,22 @@
 
 import { getClerkTokenGetter } from './clerk-api';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+function normalizeApiBaseUrl(raw: string) {
+  let value = raw.trim();
+  // Allow configuring either the backend origin (e.g. https://api.example.com)
+  // or the full API base path (e.g. https://api.example.com/api or /api)
+  if (!/\/api\/?$/.test(value)) {
+    value = `${value.replace(/\/+$/, '')}/api`;
+  }
+  return value.replace(/\/+$/, '');
+}
+
+export const API_BASE_URL = normalizeApiBaseUrl(
+  import.meta.env.VITE_API_URL ||
+    import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_BACKEND_URL ||
+    'http://localhost:4000'
+);
 
 // Helper function to make API requests with Clerk token
 async function apiRequest(

@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils";
 import { useTaskStore } from "@/stores/taskStore";
 import { useDailyGanttStore } from "@/stores/dailyGanttStore";
 import { format } from "date-fns";
+import { API_BASE_URL } from "@/lib/api";
+import { getClerkTokenGetter } from "@/lib/clerk-api";
 
 interface Message {
   role: "user" | "assistant";
@@ -59,8 +61,6 @@ export const AIChatAssistant = () => {
     setIsLoading(true);
 
     try {
-      const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
-      const { getClerkTokenGetter } = await import('@/lib/clerk-api');
       const getToken = getClerkTokenGetter();
       const token = getToken ? await getToken() : null;
       
