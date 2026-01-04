@@ -22,11 +22,27 @@ import "./calendar-styles.css";
 const DEBUG_CALENDAR_LOGS = false; // Flip to true when diagnosing drag/resize
 
 // Helper function to snap time to 15-minute increments
+// IMPORTANT: Avoid snapping to next-day 00:00 (e.g. 23:59 -> 24:00) because
+// the backend enforces that a single time segment cannot cross midnight.
 const snapTo15Minutes = (date: Date): Date => {
-  const minutes = date.getMinutes();
-  const snappedMinutes = Math.round(minutes / 15) * 15;
   const snapped = new Date(date);
-  snapped.setMinutes(snappedMinutes, 0, 0);
+
+  const minutes = snapped.getMinutes();
+  const rounded = Math.round(minutes / 15) * 15;
+
+  // Normal carry (e.g. 10:59 -> 11:00)
+  if (rounded === 60) {
+    const hours = snapped.getHours();
+    if (hours === 23) {
+      // Prevent rolling into the next day.
+      snapped.setHours(23, 45, 0, 0);
+      return snapped;
+    }
+    snapped.setHours(hours + 1, 0, 0, 0);
+    return snapped;
+  }
+
+  snapped.setMinutes(rounded, 0, 0);
   return snapped;
 };
 
