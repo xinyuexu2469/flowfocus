@@ -64,7 +64,7 @@ router.get('/by-date', async (req, res) => {
     }
 
     // PRD: Use planned_date instead of deadline for filtering
-    // Also fetch time_segments for each task (source = 'task')
+    // Also fetch time_segments for each task (include all non-deleted segments)
     const result = await query(
       `SELECT t.*, 
        COALESCE(
@@ -75,11 +75,11 @@ router.get('/by-date', async (req, res) => {
              'start_time', ts.start_time,
              'end_time', ts.end_time
            )
-         ) FILTER (WHERE ts.id IS NOT NULL AND ts.source = 'task' AND ts.deleted_at IS NULL),
+         ) FILTER (WHERE ts.id IS NOT NULL AND ts.deleted_at IS NULL),
          '[]'::json
        ) as time_segments
        FROM tasks t
-       LEFT JOIN time_segments ts ON t.id = ts.task_id AND ts.source = 'task' AND ts.deleted_at IS NULL
+       LEFT JOIN time_segments ts ON t.id = ts.task_id AND ts.deleted_at IS NULL
        WHERE t.user_id = $1 
        AND (t.planned_date::date = $2::date OR (t.planned_date IS NULL AND t.deadline::date = $2::date))
        AND t.deleted_at IS NULL 
@@ -105,7 +105,7 @@ router.get('/:id', async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    // Fetch task with time_segments (source = 'task')
+    // Fetch task with time_segments (include all non-deleted segments)
     const result = await query(
       `SELECT t.*, 
        COALESCE(
@@ -116,11 +116,11 @@ router.get('/:id', async (req, res) => {
              'start_time', ts.start_time,
              'end_time', ts.end_time
            )
-         ) FILTER (WHERE ts.id IS NOT NULL AND ts.source = 'task' AND ts.deleted_at IS NULL),
+         ) FILTER (WHERE ts.id IS NOT NULL AND ts.deleted_at IS NULL),
          '[]'::json
        ) as time_segments
        FROM tasks t
-       LEFT JOIN time_segments ts ON t.id = ts.task_id AND ts.source = 'task' AND ts.deleted_at IS NULL
+       LEFT JOIN time_segments ts ON t.id = ts.task_id AND ts.deleted_at IS NULL
        WHERE t.id = $1 AND t.user_id = $2 AND t.deleted_at IS NULL
        GROUP BY t.id`,
       [id, userId]

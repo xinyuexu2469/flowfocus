@@ -213,8 +213,8 @@ export const KanbanView = () => {
     const startDate = format(dateRange.start, "yyyy-MM-dd");
     const endDate = format(dateRange.end, "yyyy-MM-dd");
 
-    // Filter out subtasks - they should not appear in Kanban view
-    const mainTasks = tasks.filter((task) => !task.parent_task_id);
+    // Filter out subtasks and deleted tasks - they should not appear in Kanban view
+    const mainTasks = tasks.filter((task) => !task.parent_task_id && !task.deleted_at);
     
     return mainTasks.filter((task) => {
       // Get segments for this task (only non-deleted, source='task' or 'app')
@@ -243,8 +243,8 @@ export const KanbanView = () => {
 
       // If task has segments, include if ANY segment date is in range
       const hasSegmentInRange = taskSegments.some((seg) => {
-        // Use start_time's date (ISO prefix) instead of the date field to avoid timezone issues
-        const segDate = seg.start_time.slice(0, 10); // Extract YYYY-MM-DD from ISO string
+        // Use user's local date derived from the instant (consistent with other views)
+        const segDate = format(parseISO(seg.start_time), "yyyy-MM-dd");
         return segDate >= startDate && segDate <= endDate;
       });
       console.log(`[KANBAN] ${hasSegmentInRange ? '✅' : '❌'} Has segments, checking segment dates`);

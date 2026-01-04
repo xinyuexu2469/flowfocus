@@ -277,20 +277,24 @@ export const AIPlanningAssistant = ({
           taskIdMap.set(plannedTask.id, createdTask.id);
 
           // Create time segments for this task
-          // Convert local time to ISO string without timezone conversion
-          const toLocalIso = (dateStr: string, hhmmOrHhmmss: string) => {
-            // dateStr format: YYYY-MM-DD, time format: HH:mm or HH:mm:ss[.SSS]
+          // IMPORTANT: time_segments.start_time/end_time are TIMESTAMPTZ.
+          // If we send a timestamp string without timezone, Postgres will interpret it in the
+          // server/session timezone (Render/Neon often UTC), causing schedule shifts.
+          // Convert the user's LOCAL date+time into an absolute instant (ISO with Z).
+          const toInstantIso = (dateStr: string, hhmmOrHhmmss: string) => {
             const normalized = hhmmOrHhmmss.length === 5 ? `${hhmmOrHhmmss}:00` : hhmmOrHhmmss;
-            return `${dateStr}T${normalized}`;
+            const d = new Date(`${dateStr}T${normalized}`); // interpreted as LOCAL time
+            if (Number.isNaN(d.getTime())) return null;
+            return d.toISOString();
           };
 
-          const startOfDayIso = (dateStr: string) => `${dateStr}T00:00:00`;
-          const endOfDayIso = (dateStr: string) => `${dateStr}T23:59:59.999`;
+          const startOfDayIso = (dateStr: string) => new Date(`${dateStr}T00:00:00`).toISOString();
+          const endOfDayIso = (dateStr: string) => new Date(`${dateStr}T23:59:59.999`).toISOString();
 
           const addDays = (dateStr: string, days: number) => {
-            const d = new Date(dateStr);
+            const d = new Date(`${dateStr}T00:00:00`);
             d.setDate(d.getDate() + days);
-            return d.toISOString().split('T')[0];
+            return format(d, 'yyyy-MM-dd');
           };
           
           for (const timeBlock of plannedTask.timeBlocks) {
@@ -332,21 +336,29 @@ export const AIPlanningAssistant = ({
                 order: 1,
                 description: plannedTask.description || null,
                 notes: null,
-                source: 'task',
               });
             };
 
             try {
               if (!crossesMidnight) {
-                const startIso = toLocalIso(blockDate, startTime);
-                const endIso = toLocalIso(blockDate, endTime);
+                const startIso = toInstantIso(blockDate, startTime);
+                const endIso = toInstantIso(blockDate, endTime);
+                if (!startIso || !endIso) {
+                  console.error(`Invalid time block for task "${plannedTask.title}": ${blockDate} ${startTime}-${endTime}, skipping...`);
+                  continue;
+                }
                 await createOneSegment(blockDate, startIso, endIso);
               } else {
                 const nextDateStr = addDays(blockDate, 1);
-                const seg1Start = toLocalIso(blockDate, startTime);
+                const seg1Start = toInstantIso(blockDate, startTime);
                 const seg1End = endOfDayIso(blockDate);
                 const seg2Start = startOfDayIso(nextDateStr);
-                const seg2End = toLocalIso(nextDateStr, endTime);
+                const seg2End = toInstantIso(nextDateStr, endTime);
+
+                if (!seg1Start || !seg2End) {
+                  console.error(`Invalid time block for task "${plannedTask.title}": ${blockDate} ${startTime}-${endTime}, skipping...`);
+                  continue;
+                }
 
                 console.log(
                   `Splitting time block for "${plannedTask.title}" across midnight: ${seg1Start} -> ${seg1End} AND ${seg2Start} -> ${seg2End}`

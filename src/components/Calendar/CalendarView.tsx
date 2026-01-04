@@ -78,7 +78,7 @@ const validateAndClampTime = (
 
 export function CalendarView() {
   const { events, fetchEvents, createEvent, updateEvent, deleteEvent } = useCalendarStore();
-  const { tasks, fetchTasks } = useTaskStore();
+  const { tasks, fetchTasks, deleteTask } = useTaskStore();
   const [editingEvent, setEditingEvent] = useState<any>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<any>(null);
@@ -658,7 +658,13 @@ export function CalendarView() {
   const handleEventDelete = async () => {
     if (editingEvent?.id) {
       try {
-        await deleteEvent(editingEvent.id);
+        // If this calendar item is linked to a task, delete the task so all tabs stay consistent.
+        // Otherwise (custom event / unlinked), delete only the time segment.
+        if (editingEvent.taskId) {
+          await deleteTask(editingEvent.taskId);
+        } else {
+          await deleteEvent(editingEvent.id);
+        }
         toast({
           title: "Event deleted",
           description: "The event has been removed.",
