@@ -231,6 +231,11 @@ export const AIPlanningAssistant = ({
       return;
     }
 
+    // Prevent multiple clicks
+    if (isCreating) {
+      return;
+    }
+
     setIsCreating(true);
 
     try {
@@ -244,44 +249,80 @@ export const AIPlanningAssistant = ({
       // Create tasks with hierarchy
       const taskIdMap = new Map<string, string>(); // plannedTask.id -> created task id
       let currentOrder = maxOrder + 1;
+      let successCount = 0;
+      let failedCount = 0;
 
       // First pass: Create all tasks
       for (const plannedTask of tasksToCreate) {
-        // planned_date is required by backend; fall back to first time block date or today
-        const firstBlockDate = plannedTask.timeBlocks[0]?.date || new Date().toISOString().split("T")[0];
-        const taskData = {
-          title: plannedTask.title,
-          description: plannedTask.description || null,
-          estimated_minutes: plannedTask.estimatedMinutes,
-          priority: plannedTask.priority,
-          tags: plannedTask.tags || [],
-          status: "todo" as const,
-          planned_date: firstBlockDate, // ensure backend required field is populated
-          parent_task_id: plannedTask.parentTaskId 
-            ? taskIdMap.get(plannedTask.parentTaskId) || null 
-            : null,
-          order: currentOrder++,
-        };
-
-        const createdTask = await tasksApi.create(taskData);
-        taskIdMap.set(plannedTask.id, createdTask.id);
-
-        // Create time segments for this task
-        const toUtcIso = (dateStr: string, hhmm: string) => `${dateStr}T${hhmm}:00Z`;
-        for (const timeBlock of plannedTask.timeBlocks) {
-          const blockDate = timeBlock.date || firstBlockDate;
-          const startIso = toUtcIso(blockDate, timeBlock.startTime);
-          const endIso = toUtcIso(blockDate, timeBlock.endTime);
-
-          await timeSegmentsApi.create({
-            task_id: createdTask.id,
-            date: blockDate,
-            start_time: startIso,
-            end_time: endIso,
+        try {
+          // planned_date is required by backend; fall back to first time block date or today
+          const firstBlockDate = plannedTask.timeBlocks[0]?.date || new Date().toISOString().split("T")[0];
+          const taskData = {
             title: plannedTask.title,
-            title_is_custom: false,
-            source: "task",
-          });
+            description: plannedTask.description || null,
+            estimated_minutes: plannedTask.estimatedMinutes,
+            priority: plannedTask.priority,
+            tags: plannedTask.tags || [],
+            status: "todo" as const,
+            planned_date: firstBlockDate, // ensure backend required field is populated
+            parent_task_id: plannedTask.parentTaskId 
+              ? taskIdMap.get(plannedTask.parentTaskId) || null 
+              : null,
+            order: currentOrder++,
+          };
+
+          const createdTask = await tasksApi.create(taskData);
+          taskIdMap.set(plannedTask.id, createdTask.id);
+
+          // Create time segments for this task
+          // Convert local time to ISO string without timezone conversion
+          const toLocalIso = (dateStr: string, hhmm: string) => {
+            // dateStr format: YYYY-MM-DD, hhmm format: HH:mm
+            return `${dateStr}T${hhmm}:00`;
+          };
+          
+          for (const timeBlock of plannedTask.timeBlocks) {
+            const blockDate = timeBlock.date || firstBlockDate;
+            let startIso = toLocalIso(blockDate, timeBlock.startTime);
+            let endIso = toLocalIso(blockDate, timeBlock.endTime);
+
+            // Handle midnight crossing: if end time is before start time on the same date,
+            // it means the time block crosses midnight, so move end date to next day
+            if (timeBlock.endTime < timeBlock.startTime) {
+              const nextDate = new Date(blockDate);
+              nextDate.setDate(nextDate.getDate() + 1);
+              const nextDateStr = nextDate.toISOString().split('T')[0];
+              endIso = toLocalIso(nextDateStr, timeBlock.endTime);
+              console.log(`Adjusted time block for "${plannedTask.title}" crossing midnight: ${startIso} -> ${endIso}`);
+            }
+
+            // Validate time constraint before creating
+            if (startIso >= endIso) {
+              console.error(`Invalid time block for task "${plannedTask.title}": start_time=${startIso}, end_time=${endIso}, skipping...`);
+              continue; // Skip invalid time blocks
+            }
+
+            try {
+              await timeSegmentsApi.create({
+                task_id: createdTask.id,
+                date: blockDate,
+                start_time: startIso,
+                end_time: endIso,
+                title: plannedTask.title,
+                title_is_custom: false,
+                source: "task",
+              });
+            } catch (segmentError: any) {
+              console.error(`Failed to create time segment for task "${plannedTask.title}":`, segmentError);
+              // Continue with other time blocks even if one fails
+            }
+          }
+          
+          successCount++;
+        } catch (taskError: any) {
+          console.error(`Failed to create task "${plannedTask.title}":`, taskError);
+          failedCount++;
+          // Continue with other tasks even if one fails
         }
       }
 
@@ -290,15 +331,26 @@ export const AIPlanningAssistant = ({
       const today = new Date();
       await fetchSegmentsForDate(today);
 
-      const totalBlocks = tasksToCreate.reduce((sum, t) => sum + t.timeBlocks.length, 0);
-      toast({
-        title: "✅ Schedule Created",
-        description: `Created ${tasksToCreate.length} task${tasksToCreate.length !== 1 ? 's' : ''} and ${totalBlocks} time block${totalBlocks !== 1 ? 's' : ''}`,
-      });
-
-      onSuccess();
-      onOpenChange(false);
-      reset();
+      // Show success message
+      if (successCount > 0) {
+        toast({
+          title: "✅ Schedule Created",
+          description: failedCount > 0 
+            ? `Successfully created ${successCount} task(s). ${failedCount} task(s) failed.`
+            : `Created ${successCount} task(s) successfully`,
+        });
+        
+        // Only close and reset if at least some tasks were created successfully
+        onSuccess();
+        onOpenChange(false);
+        reset();
+      } else {
+        toast({
+          variant: "destructive",
+          title: "创建失败",
+          description: "所有任务都无法创建，请检查时间设置是否正确。",
+        });
+      }
     } catch (error: any) {
       console.error("Create schedule error:", error);
       toast({

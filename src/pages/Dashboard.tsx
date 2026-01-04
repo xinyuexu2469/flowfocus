@@ -9,9 +9,10 @@ import { GoogleCalendarHeaderButton } from "@/components/GoogleCalendarHeaderBut
 import { CalendarView } from "@/components/Calendar/CalendarView";
 import { AIChatAssistant } from "@/components/AIChatAssistant";
 import { AIPlanningAssistant } from "@/components/AIPlanningAssistant";
+import { NotesPanel } from "@/components/NotesPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UserButton, SignOutButton } from "@clerk/clerk-react";
-import { Target, CheckSquare, Calendar, CalendarDays, Settings, Clock, BarChart3, LayoutGrid, Bot } from "lucide-react";
+import { Target, CheckSquare, Calendar, CalendarDays, Settings, Clock, BarChart3, LayoutGrid, Bot, FileText } from "lucide-react";
 import { KanbanView } from "@/components/KanbanView";
 import { Button } from "@/components/ui/button";
 
@@ -74,7 +75,7 @@ const Dashboard = () => {
         </div>
 
         <Tabs defaultValue="tasks" className="space-y-4 pb-4">
-          <TabsList className="grid w-full max-w-6xl grid-cols-7">
+          <TabsList className="grid w-full max-w-6xl grid-cols-8">
             <TabsTrigger value="goals" className="gap-2">
               <Target className="w-4 h-4" />
               Goals
@@ -98,6 +99,10 @@ const Dashboard = () => {
             <TabsTrigger value="monthly-gantt" className="gap-2">
               <BarChart3 className="w-4 h-4" />
               Monthly Gantt
+            </TabsTrigger>
+            <TabsTrigger value="notes" className="gap-2">
+              <FileText className="w-4 h-4" />
+              Notes
             </TabsTrigger>
             <TabsTrigger value="settings" className="gap-2">
               <Settings className="w-4 h-4" />
@@ -127,6 +132,10 @@ const Dashboard = () => {
 
           <TabsContent value="monthly-gantt" className="space-y-0 h-[calc(100vh-13rem)]">
             <MonthlyGanttView />
+          </TabsContent>
+
+          <TabsContent value="notes" className="space-y-6 min-h-[calc(100vh-16rem)] pb-8">
+            <NotesPanel />
           </TabsContent>
 
           <TabsContent value="settings" className="space-y-6 min-h-[calc(100vh-16rem)] pb-8">
