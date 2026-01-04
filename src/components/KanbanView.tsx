@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { format, startOfWeek, endOfWeek, addWeeks, isSameDay } from "date-fns";
+import { format, startOfWeek, endOfWeek, addWeeks, isSameDay, parseISO } from "date-fns";
 import { Calendar, Clock, Tag, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import {
   Select,
