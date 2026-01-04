@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 
 // DISABLED: Sidebar drag-to-timeline feature to prevent page freeze
 const ENABLE_SIDEBAR_DRAG_CREATE = false;
+const DEBUG_TIMELINE_LOGS = false; // Flip to true when diagnosing renders
 
 interface GanttRow {
   taskId: string;
@@ -378,12 +379,14 @@ const TimelineRow: React.FC<TimelineRowProps> = ({
   selectedDate,
   dragPreview,
 }) => {
-  console.log(`📍 [TimelineRow ${rowIndex}] Rendering:`, {
-    taskId: row.taskId,
-    taskTitle: row.task?.title || 'Unknown',
-    segmentCount: row.segments.length,
-    hasSubtasks: !!row.subtasks && row.subtasks.length > 0,
-  });
+  if (DEBUG_TIMELINE_LOGS) {
+    console.log(`📍 [TimelineRow ${rowIndex}] Rendering:`, {
+      taskId: row.taskId,
+      taskTitle: row.task?.title || 'Unknown',
+      segmentCount: row.segments.length,
+      hasSubtasks: !!row.subtasks && row.subtasks.length > 0,
+    });
+  }
 
   const { setNodeRef, isOver } = useDroppable({
     id: `timeline-row-${row.taskId}`,
@@ -448,11 +451,13 @@ const TimelineRow: React.FC<TimelineRowProps> = ({
 
       {/* Time blocks for this task */}
       {row.segments.map((segment, segIdx) => {
-        console.log(`  ⏱️ [TimelineRow ${rowIndex}] Rendering TimeBlock ${segIdx}:`, {
-          segmentId: segment.id.substring(0, 8),
-          start: segment.start_time,
-          end: segment.end_time,
-        });
+        if (DEBUG_TIMELINE_LOGS) {
+          console.log(`  ⏱️ [TimelineRow ${rowIndex}] Rendering TimeBlock ${segIdx}:`, {
+            segmentId: segment.id.substring(0, 8),
+            start: segment.start_time,
+            end: segment.end_time,
+          });
+        }
         return (
           <TimeBlock
             key={segment.id}

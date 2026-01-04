@@ -121,6 +121,18 @@ router.post('/', async (req, res) => {
     res.status(201).json(newSegment);
   } catch (error) {
     console.error('Error creating time segment:', error);
+    if (error?.code === '23514') {
+      if (error?.constraint === 'valid_times') {
+        return res.status(400).json({
+          error: 'Invalid time range: end_time must be after start_time.',
+        });
+      }
+      if (error?.constraint === 'no_midnight_cross') {
+        return res.status(400).json({
+          error: 'Invalid time range: a single time segment cannot cross midnight. Split it into two days.',
+        });
+      }
+    }
     res.status(500).json({ error: error.message });
   }
 });
@@ -176,6 +188,18 @@ router.put('/:id', async (req, res) => {
     res.json(updatedSegment);
   } catch (error) {
     console.error('Error updating time segment:', error);
+    if (error?.code === '23514') {
+      if (error?.constraint === 'valid_times') {
+        return res.status(400).json({
+          error: 'Invalid time range: end_time must be after start_time.',
+        });
+      }
+      if (error?.constraint === 'no_midnight_cross') {
+        return res.status(400).json({
+          error: 'Invalid time range: a single time segment cannot cross midnight. Split it into two days.',
+        });
+      }
+    }
     res.status(500).json({ error: error.message });
   }
 });

@@ -47,8 +47,10 @@ export function NotesPanel() {
     <Card className="p-4 md:p-6">
       <div className="flex items-center justify-between gap-3 mb-3">
         <div>
-          <h3 className="text-lg font-semibold">Notes / 笔记</h3>
-          <p className="text-sm text-muted-foreground">记录好的经验与坏的教训（自动保存在本机浏览器）</p>
+          <h3 className="text-lg font-semibold">Notes</h3>
+          <p className="text-sm text-muted-foreground">
+            Capture lessons learned and helpful notes (saved locally in your browser)
+          </p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -56,7 +58,7 @@ export function NotesPanel() {
             type="button"
             variant="outline"
             size="icon"
-            aria-label="加粗"
+            aria-label="Bold"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               editorRef.current?.focus();
@@ -69,7 +71,7 @@ export function NotesPanel() {
             type="button"
             variant="outline"
             size="icon"
-            aria-label="斜体"
+            aria-label="Italic"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               editorRef.current?.focus();
@@ -82,7 +84,7 @@ export function NotesPanel() {
             type="button"
             variant="outline"
             size="icon"
-            aria-label="下划线"
+            aria-label="Underline"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               editorRef.current?.focus();
@@ -95,7 +97,7 @@ export function NotesPanel() {
             type="button"
             variant="outline"
             size="icon"
-            aria-label="项目符号"
+            aria-label="Bulleted list"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               editorRef.current?.focus();
@@ -107,14 +109,14 @@ export function NotesPanel() {
           <Button
             type="button"
             variant="outline"
-            aria-label="清除格式"
+            aria-label="Clear formatting"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               editorRef.current?.focus();
               safeExecCommand("removeFormat");
             }}
           >
-            清除格式
+            Clear formatting
           </Button>
         </div>
       </div>
@@ -136,7 +138,7 @@ export function NotesPanel() {
       />
 
       <p className="mt-2 text-xs text-muted-foreground">
-        提示：选中文本后再点工具按钮；也可用快捷键（Ctrl/Cmd + B/I/U）。
+        Tip: Select text, then click a toolbar button (Ctrl/Cmd + B/I/U).
       </p>
     </Card>
   );

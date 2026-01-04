@@ -47,7 +47,7 @@ interface TaskDialogProps {
 
 export const TaskDialog = ({ open, onOpenChange, onSuccess, editTask, parentTaskId, defaultDeadline }: TaskDialogProps) => {
   const { toast } = useToast();
-  const { calculateScheduledTime } = useDailyGanttStore();
+  const { calculateScheduledTime, createSegment, updateSegment, deleteSegment } = useDailyGanttStore();
   const [loading, setLoading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [goals, setGoals] = useState<Goal[]>([]);
@@ -382,7 +382,7 @@ export const TaskDialog = ({ open, onOpenChange, onSuccess, editTask, parentTask
         for (const seg of existingSegments) {
           if (seg.source === 'task' && !formIds.has(seg.id)) {
             try {
-              await api.timeSegments.delete(seg.id);
+              await deleteSegment(seg.id);
             } catch (error) {
               console.warn('Error deleting segment:', seg.id, error);
             }
@@ -465,7 +465,7 @@ export const TaskDialog = ({ open, onOpenChange, onSuccess, editTask, parentTask
             if (segment.id && existingIds.has(segment.id)) {
               // Update existing segment (preserve source if it was 'app', otherwise use 'task')
               const existingSeg = existingSegments.find(s => s.id === segment.id);
-              await api.timeSegments.update(segment.id, {
+              await updateSegment(segment.id, {
                 date: segmentDate,
                 start_time: startDateTime,
                 end_time: endDateTime,
@@ -477,7 +477,7 @@ export const TaskDialog = ({ open, onOpenChange, onSuccess, editTask, parentTask
               });
             } else {
               // Create new segment from Task Edit
-              await api.timeSegments.create({
+              await createSegment({
                 task_id: taskId,
                 date: segmentDate,
                 start_time: startDateTime,

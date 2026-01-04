@@ -26,6 +26,7 @@ export const TimeBlock: React.FC<TimeBlockProps> = ({
   timelineConfig,
   selectedDate,
 }) => {
+  const DEBUG_LOGS = false; // Flip to true for granular drag/render logs
   const { updateSegment, toggleSegmentSelection, selectedSegmentIds } = useDailyGanttStore();
   const { toast } = useToast();
   const blockRef = useRef<HTMLDivElement>(null);
@@ -72,22 +73,26 @@ export const TimeBlock: React.FC<TimeBlockProps> = ({
   const debugLeft = ((debugStartMinutes - (timelineConfig.startHour * 60)) / (timelineConfig.totalHours * 60)) * 100;
   const debugWidth = ((debugEndMinutes - debugStartMinutes) / (timelineConfig.totalHours * 60)) * 100;
   
-  console.log('🎨 [TimeBlock] Rendering:', {
-    segmentId: segment.id.substring(0, 8),
-    taskTitle: segment.task?.title || 'Unknown',
-    isOptimistic: !!optimisticSegment,
-    currentTime: `${start.toLocaleTimeString()} - ${end.toLocaleTimeString()}`,
-    position: `left: ${debugLeft.toFixed(1)}%, width: ${debugWidth.toFixed(1)}%`,
-    originalStart: segment.start_time,
-    hasPreview: !!preview,
-  });
+  if (DEBUG_LOGS) {
+    console.log('🎨 [TimeBlock] Rendering:', {
+      segmentId: segment.id.substring(0, 8),
+      taskTitle: segment.task?.title || 'Unknown',
+      isOptimistic: !!optimisticSegment,
+      currentTime: `${start.toLocaleTimeString()} - ${end.toLocaleTimeString()}`,
+      position: `left: ${debugLeft.toFixed(1)}%, width: ${debugWidth.toFixed(1)}%`,
+      originalStart: segment.start_time,
+      hasPreview: !!preview,
+    });
+  }
 
   // Clear optimistic update when segment prop catches up
   useEffect(() => {
     if (optimisticSegment &&
         segment.start_time === optimisticSegment.start_time &&
         segment.end_time === optimisticSegment.end_time) {
-      console.log('[TimeBlock] ✅ Server confirmed update, clearing optimistic state');
+      if (DEBUG_LOGS) {
+        console.log('[TimeBlock] ✅ Server confirmed update, clearing optimistic state');
+      }
       setOptimisticSegment(null);
     }
   }, [segment.start_time, segment.end_time, optimisticSegment]);
@@ -154,11 +159,13 @@ export const TimeBlock: React.FC<TimeBlockProps> = ({
       startEnd: new Date(end),
     });
 
-    console.log("[TimeBlock] 🖱️ Drag started:", {
-      type,
-      startTime: start.toLocaleTimeString(),
-      endTime: end.toLocaleTimeString(),
-    });
+    if (DEBUG_LOGS) {
+      console.log("[TimeBlock] 🖱️ Drag started:", {
+        type,
+        startTime: start.toLocaleTimeString(),
+        endTime: end.toLocaleTimeString(),
+      });
+    }
   };
 
   const applyDragDelta = (snappedDelta: number) => {

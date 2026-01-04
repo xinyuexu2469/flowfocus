@@ -19,6 +19,8 @@ import { TaskDialog } from "@/components/TaskDialog";
 import { addHours, format } from "date-fns";
 import "./calendar-styles.css";
 
+const DEBUG_CALENDAR_LOGS = false; // Flip to true when diagnosing drag/resize
+
 // Helper function to snap time to 15-minute increments
 const snapTo15Minutes = (date: Date): Date => {
   const minutes = date.getMinutes();
@@ -132,11 +134,13 @@ export function CalendarView() {
   // Handle event drop (move event - body drag)
   // This is called when the user drags the event body to move it
   const handleEventDrop = async (dropInfo: EventDropArg) => {
-    console.log("[Calendar] FROM MOVE - handleEventDrop called", {
-      eventId: dropInfo.event.id,
-      newStart: dropInfo.event.start,
-      newEnd: dropInfo.event.end,
-    });
+    if (DEBUG_CALENDAR_LOGS) {
+      console.log("[Calendar] FROM MOVE - handleEventDrop called", {
+        eventId: dropInfo.event.id,
+        newStart: dropInfo.event.start,
+        newEnd: dropInfo.event.end,
+      });
+    }
     
     try {
       const calendarApi = calendarRef.current?.getApi();
@@ -309,57 +313,71 @@ export function CalendarView() {
       if (startChangedSignificantly && endChangedMinimally) {
         // Start changed a lot, end barely changed - definitely top edge resize
         isTopEdgeResize = true;
-        console.log("[Calendar] FROM START - Top edge resize detected", {
-          eventId: resizeInfo.event.id,
-          startDelta: startDelta / 60000 + " min",
-          endDelta: endDelta / 60000 + " min",
-        });
+        if (DEBUG_CALENDAR_LOGS) {
+          console.log("[Calendar] FROM START - Top edge resize detected", {
+            eventId: resizeInfo.event.id,
+            startDelta: startDelta / 60000 + " min",
+            endDelta: endDelta / 60000 + " min",
+          });
+        }
       } else if (endChangedSignificantly && startChangedMinimally) {
         // End changed a lot, start barely changed - definitely bottom edge resize
         isBottomEdgeResize = true;
-        console.log("[Calendar] FROM END - Bottom edge resize detected", {
-          eventId: resizeInfo.event.id,
-          startDelta: startDelta / 60000 + " min",
-          endDelta: endDelta / 60000 + " min",
-        });
+        if (DEBUG_CALENDAR_LOGS) {
+          console.log("[Calendar] FROM END - Bottom edge resize detected", {
+            eventId: resizeInfo.event.id,
+            startDelta: startDelta / 60000 + " min",
+            endDelta: endDelta / 60000 + " min",
+          });
+        }
       } else if (startDelta > endDelta * 2) {
         // Start changed more than twice as much as end - likely top edge
         isTopEdgeResize = true;
-        console.log("[Calendar] FROM START - Top edge resize (relative)", {
-          eventId: resizeInfo.event.id,
-          startDelta: startDelta / 60000 + " min",
-          endDelta: endDelta / 60000 + " min",
-        });
+        if (DEBUG_CALENDAR_LOGS) {
+          console.log("[Calendar] FROM START - Top edge resize (relative)", {
+            eventId: resizeInfo.event.id,
+            startDelta: startDelta / 60000 + " min",
+            endDelta: endDelta / 60000 + " min",
+          });
+        }
       } else if (endDelta > startDelta * 2) {
         // End changed more than twice as much as start - likely bottom edge
         isBottomEdgeResize = true;
-        console.log("[Calendar] FROM END - Bottom edge resize (relative)", {
-          eventId: resizeInfo.event.id,
-          startDelta: startDelta / 60000 + " min",
-          endDelta: endDelta / 60000 + " min",
-        });
+        if (DEBUG_CALENDAR_LOGS) {
+          console.log("[Calendar] FROM END - Bottom edge resize (relative)", {
+            eventId: resizeInfo.event.id,
+            startDelta: startDelta / 60000 + " min",
+            endDelta: endDelta / 60000 + " min",
+          });
+        }
       } else {
         // Ambiguous - use relative comparison with higher threshold
         if (startDelta > endDelta * 1.5 && startDelta > 2 * 60 * 1000) {
           isTopEdgeResize = true;
-          console.log("[Calendar] FROM START - Top edge resize (ambiguous case)", {
-            eventId: resizeInfo.event.id,
-            startDelta: startDelta / 60000 + " min",
-            endDelta: endDelta / 60000 + " min",
-          });
+          if (DEBUG_CALENDAR_LOGS) {
+            console.log("[Calendar] FROM START - Top edge resize (ambiguous case)", {
+              eventId: resizeInfo.event.id,
+              startDelta: startDelta / 60000 + " min",
+              endDelta: endDelta / 60000 + " min",
+            });
+          }
         } else if (endDelta > startDelta * 1.5 && endDelta > 2 * 60 * 1000) {
           isBottomEdgeResize = true;
-          console.log("[Calendar] FROM END - Bottom edge resize (ambiguous case)", {
-            eventId: resizeInfo.event.id,
-            startDelta: startDelta / 60000 + " min",
-            endDelta: endDelta / 60000 + " min",
-          });
+          if (DEBUG_CALENDAR_LOGS) {
+            console.log("[Calendar] FROM END - Bottom edge resize (ambiguous case)", {
+              eventId: resizeInfo.event.id,
+              startDelta: startDelta / 60000 + " min",
+              endDelta: endDelta / 60000 + " min",
+            });
+          }
         } else {
-          console.warn("[Calendar] Resize direction ambiguous, defaulting to bottom edge", {
-            eventId: resizeInfo.event.id,
-            startDelta: startDelta / 60000 + " min",
-            endDelta: endDelta / 60000 + " min",
-          });
+          if (DEBUG_CALENDAR_LOGS) {
+            console.warn("[Calendar] Resize direction ambiguous, defaulting to bottom edge", {
+              eventId: resizeInfo.event.id,
+              startDelta: startDelta / 60000 + " min",
+              endDelta: endDelta / 60000 + " min",
+            });
+          }
         }
       }
       
@@ -541,7 +559,9 @@ export function CalendarView() {
     if (!ENABLE_SIDEBAR_DRAG_CREATE) {
       return; // Do nothing if feature is disabled
     }
-    console.log('FullCalendar drop event:', dropInfo);
+    if (DEBUG_CALENDAR_LOGS) {
+      console.log('FullCalendar drop event:', dropInfo);
+    }
     
     // Try to get task from activeTask first, then from dropInfo
     let task = activeTask;
@@ -549,7 +569,9 @@ export function CalendarView() {
     if (!task && dropInfo.draggedEl) {
       // Try to get task ID from data attribute
       const taskId = dropInfo.draggedEl.getAttribute('data-task-id');
-      console.log('Task ID from data attribute:', taskId);
+      if (DEBUG_CALENDAR_LOGS) {
+        console.log('Task ID from data attribute:', taskId);
+      }
       if (taskId) {
         task = tasks.find((t) => t.id === taskId);
       }

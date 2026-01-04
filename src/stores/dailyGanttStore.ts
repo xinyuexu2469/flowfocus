@@ -111,10 +111,17 @@ export const useDailyGanttStore = create<DailyGanttStore>((set, get) => ({
       try {
         const { useCalendarStore } = await import('./calendarStore');
         const calendarStore = useCalendarStore.getState();
-        const now = new Date();
-        const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
-        await calendarStore.fetchEvents(start, end);
+        if (calendarStore.lastFetchedRange) {
+          await calendarStore.fetchEvents(
+            calendarStore.lastFetchedRange.start,
+            calendarStore.lastFetchedRange.end
+          );
+        } else {
+          const now = new Date();
+          const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+          await calendarStore.fetchEvents(start, end);
+        }
       } catch (error) {
         console.warn('Failed to refresh calendar after segment creation:', error);
       }
@@ -269,10 +276,17 @@ export const useDailyGanttStore = create<DailyGanttStore>((set, get) => ({
           try {
             const { useCalendarStore } = await import('./calendarStore');
             const calendarStore = useCalendarStore.getState();
-            const now = new Date();
-            const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-            const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
-            await calendarStore.fetchEvents(start, end);
+            if (calendarStore.lastFetchedRange) {
+              await calendarStore.fetchEvents(
+                calendarStore.lastFetchedRange.start,
+                calendarStore.lastFetchedRange.end
+              );
+            } else {
+              const now = new Date();
+              const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+              const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+              await calendarStore.fetchEvents(start, end);
+            }
           } catch (error) {
             console.warn('Failed to refresh calendar after segment update:', error);
           }
@@ -312,10 +326,17 @@ export const useDailyGanttStore = create<DailyGanttStore>((set, get) => ({
       try {
         const { useCalendarStore } = await import('./calendarStore');
         const calendarStore = useCalendarStore.getState();
-        const now = new Date();
-        const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
-        await calendarStore.fetchEvents(start, end);
+        if (calendarStore.lastFetchedRange) {
+          await calendarStore.fetchEvents(
+            calendarStore.lastFetchedRange.start,
+            calendarStore.lastFetchedRange.end
+          );
+        } else {
+          const now = new Date();
+          const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+          await calendarStore.fetchEvents(start, end);
+        }
       } catch (error) {
         console.warn('Failed to refresh calendar after segment deletion:', error);
       }
@@ -360,6 +381,20 @@ export const useDailyGanttStore = create<DailyGanttStore>((set, get) => ({
       } catch (error) {
         console.warn('Failed to refresh task store after bulk segment deletion:', error);
       }
+
+      // Refresh calendar events to sync (range-aware)
+      try {
+        const { useCalendarStore } = await import('./calendarStore');
+        const calendarStore = useCalendarStore.getState();
+        if (calendarStore.lastFetchedRange) {
+          await calendarStore.fetchEvents(
+            calendarStore.lastFetchedRange.start,
+            calendarStore.lastFetchedRange.end
+          );
+        }
+      } catch (error) {
+        console.warn('Failed to refresh calendar after bulk segment deletion:', error);
+      }
     } catch (error: any) {
       set({ error: error.message });
       throw error;
@@ -394,6 +429,20 @@ export const useDailyGanttStore = create<DailyGanttStore>((set, get) => ({
         await useTaskStore.getState().refreshSegments();
       } catch (error) {
         console.warn('Failed to refresh task store after bulk segment update:', error);
+      }
+
+      // Refresh calendar events to sync (range-aware)
+      try {
+        const { useCalendarStore } = await import('./calendarStore');
+        const calendarStore = useCalendarStore.getState();
+        if (calendarStore.lastFetchedRange) {
+          await calendarStore.fetchEvents(
+            calendarStore.lastFetchedRange.start,
+            calendarStore.lastFetchedRange.end
+          );
+        }
+      } catch (error) {
+        console.warn('Failed to refresh calendar after bulk segment update:', error);
       }
     } catch (error: any) {
       set({ error: error.message });

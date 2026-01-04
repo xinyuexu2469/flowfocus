@@ -13,12 +13,16 @@ function normalizeApiBaseUrl(raw: string) {
   return value.replace(/\/+$/, '');
 }
 
-export const API_BASE_URL = normalizeApiBaseUrl(
+const CONFIGURED_API_BASE_URL =
   import.meta.env.VITE_API_URL ||
-    import.meta.env.VITE_API_BASE_URL ||
-    import.meta.env.VITE_BACKEND_URL ||
-    'http://localhost:4000'
-);
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_BACKEND_URL;
+
+// In development, always use same-origin `/api` so the Vite dev server proxy
+// can forward requests to the local backend (works in Codespaces/devcontainers).
+export const API_BASE_URL = import.meta.env.DEV
+  ? '/api'
+  : normalizeApiBaseUrl(CONFIGURED_API_BASE_URL || 'http://localhost:4000');
 
 // Helper function to make API requests with Clerk token
 async function apiRequest(

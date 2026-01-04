@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { useTaskStore } from "@/stores/taskStore";
-import { getApiClient } from "@/lib/clerk-api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -526,75 +525,11 @@ const SortableTask = ({
                   
                   if (oldIndex !== -1 && newIndex !== -1) {
                     const newOrder = arrayMove(sortedSubtasks, oldIndex, newIndex);
-                    
-                    // 1. OPTIMISTIC UPDATE: Immediately update local state
-                    const taskStore = useTaskStore.getState();
-                    const originalTasks = [...taskStore.tasks];
-                    const originalSegmentsByTask = new Map(taskStore.segmentsByTask);
-                    
-                    // Update order for all affected subtasks in local state
-                    const updatedTasks = taskStore.tasks.map((t) => {
-                      const newOrderIndex = newOrder.findIndex((st) => st.id === t.id);
-                      if (newOrderIndex !== -1 && t.parent_task_id === task.id) {
-                        return { ...t, order: newOrderIndex };
-                      }
-                      return t;
-                    });
-                    
-                    // Recalculate tasksByDate manually to avoid updateTask overwriting
-                    const segmentsByTask = taskStore.segmentsByTask;
-                    const tasksByDate: { [date: string]: Task[] } = {};
-                    const mainTasks = updatedTasks.filter((t) => !t.parent_task_id);
-                    mainTasks.forEach((t) => {
-                      const segs = segmentsByTask.get(t.id) || [];
-                      const segmentDates = new Set<string>();
-                      segs.forEach((seg) => {
-                        if (!seg.deleted_at) {
-                          const dateKey = format(parseISO(seg.start_time), 'yyyy-MM-dd');
-                          segmentDates.add(dateKey);
-                        }
-                      });
-                      if (segmentDates.size > 0) {
-                        segmentDates.forEach((dateKey) => {
-                          if (!tasksByDate[dateKey]) tasksByDate[dateKey] = [];
-                          if (!tasksByDate[dateKey].some(tt => tt.id === t.id)) {
-                            tasksByDate[dateKey].push(t);
-                          }
-                        });
-                      } else {
-                        const dateToUse = t.planned_date || t.deadline;
-                        if (dateToUse) {
-                          const dateKey = format(parseISO(dateToUse), 'yyyy-MM-dd');
-                          if (!tasksByDate[dateKey]) tasksByDate[dateKey] = [];
-                          if (!tasksByDate[dateKey].some(tt => tt.id === t.id)) {
-                            tasksByDate[dateKey].push(t);
-                          }
-                        }
-                      }
-                    });
-                    
-                    // Apply optimistic update with both tasks and tasksByDate
-                    useTaskStore.setState({ tasks: updatedTasks, tasksByDate });
-                    
-                    // 2. PERSIST TO DATABASE: Update all affected subtasks sequentially to avoid race conditions
+
+                    // Persist via global store action (single authoritative mutation path)
                     try {
-                      const api = getApiClient();
-                      
-                      // Update sequentially to avoid race conditions
-                      for (let i = 0; i < newOrder.length; i++) {
-                        if (newOrder[i].order !== i) {
-                          await api.tasks.update(newOrder[i].id, { order: i });
-                          // Update local state after each successful update
-                          const currentTasks = useTaskStore.getState().tasks;
-                          const updatedTask = currentTasks.find(t => t.id === newOrder[i].id);
-                          if (updatedTask) {
-                            const newTasks = currentTasks.map(t => 
-                              t.id === newOrder[i].id ? { ...t, order: i } : t
-                            );
-                            useTaskStore.setState({ tasks: newTasks });
-                          }
-                        }
-                      }
+                      const store = useTaskStore.getState();
+                      await store.reorderSubtasks(task.id, newOrder.map((t) => t.id));
                       
                       toast({
                         title: "Subtask order updated",
@@ -602,38 +537,6 @@ const SortableTask = ({
                       });
                     } catch (error: any) {
                       console.error('Failed to update subtask order:', error);
-                      // ROLLBACK: Revert optimistic update on error
-                      const rollbackTasksByDate: { [date: string]: Task[] } = {};
-                      const rollbackMainTasks = originalTasks.filter((t) => !t.parent_task_id);
-                      rollbackMainTasks.forEach((t) => {
-                        const segs = originalSegmentsByTask.get(t.id) || [];
-                        const segmentDates = new Set<string>();
-                        segs.forEach((seg) => {
-                          if (!seg.deleted_at) {
-                            const dateKey = format(parseISO(seg.start_time), 'yyyy-MM-dd');
-                            segmentDates.add(dateKey);
-                          }
-                        });
-                        if (segmentDates.size > 0) {
-                          segmentDates.forEach((dateKey) => {
-                            if (!rollbackTasksByDate[dateKey]) rollbackTasksByDate[dateKey] = [];
-                            if (!rollbackTasksByDate[dateKey].some(tt => tt.id === t.id)) {
-                              rollbackTasksByDate[dateKey].push(t);
-                            }
-                          });
-                        } else {
-                          const dateToUse = t.planned_date || t.deadline;
-                          if (dateToUse) {
-                            const dateKey = format(parseISO(dateToUse), 'yyyy-MM-dd');
-                            if (!rollbackTasksByDate[dateKey]) rollbackTasksByDate[dateKey] = [];
-                            if (!rollbackTasksByDate[dateKey].some(tt => tt.id === t.id)) {
-                              rollbackTasksByDate[dateKey].push(t);
-                            }
-                          }
-                        }
-                      });
-                      useTaskStore.setState({ tasks: originalTasks, tasksByDate: rollbackTasksByDate });
-                      
                       toast({
                         variant: "destructive",
                         title: "Error",

@@ -11,7 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { format, parseISO } from "date-fns";
 import { useDailyGanttStore } from "@/stores/dailyGanttStore";
 import { useTaskStore } from "@/stores/taskStore";
-import { API_BASE_URL, tasksApi, timeSegmentsApi } from "@/lib/api";
+import { API_BASE_URL } from "@/lib/api";
 
 interface Message {
   id: string;
@@ -56,8 +56,8 @@ export const AIPlanningAssistant = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { fetchTasks } = useTaskStore();
-  const { fetchSegmentsForDate } = useDailyGanttStore();
+  const { fetchTasks, createTask, refreshSegments } = useTaskStore();
+  const { fetchSegmentsForDate, createSegment } = useDailyGanttStore();
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -239,10 +239,11 @@ export const AIPlanningAssistant = ({
     setIsCreating(true);
 
     try {
-      // Get max order for existing tasks
-      const allTasks = await tasksApi.getAll();
-      const topLevelTasks = allTasks.filter((t: any) => !t.parent_task_id);
-      const maxOrder = topLevelTasks.length > 0 
+      // Ensure task store is up to date before we compute ordering
+      await fetchTasks();
+      const currentTasks = useTaskStore.getState().tasks;
+      const topLevelTasks = currentTasks.filter((t: any) => !t.parent_task_id && !t.deleted_at);
+      const maxOrder = topLevelTasks.length > 0
         ? Math.max(...topLevelTasks.map((t: any) => t.order || 0))
         : -1;
 
@@ -271,47 +272,89 @@ export const AIPlanningAssistant = ({
             order: currentOrder++,
           };
 
-          const createdTask = await tasksApi.create(taskData);
+          // Create via authoritative store layer
+          const createdTask = await createTask(taskData);
           taskIdMap.set(plannedTask.id, createdTask.id);
 
           // Create time segments for this task
           // Convert local time to ISO string without timezone conversion
-          const toLocalIso = (dateStr: string, hhmm: string) => {
-            // dateStr format: YYYY-MM-DD, hhmm format: HH:mm
-            return `${dateStr}T${hhmm}:00`;
+          const toLocalIso = (dateStr: string, hhmmOrHhmmss: string) => {
+            // dateStr format: YYYY-MM-DD, time format: HH:mm or HH:mm:ss[.SSS]
+            const normalized = hhmmOrHhmmss.length === 5 ? `${hhmmOrHhmmss}:00` : hhmmOrHhmmss;
+            return `${dateStr}T${normalized}`;
+          };
+
+          const startOfDayIso = (dateStr: string) => `${dateStr}T00:00:00`;
+          const endOfDayIso = (dateStr: string) => `${dateStr}T23:59:59.999`;
+
+          const addDays = (dateStr: string, days: number) => {
+            const d = new Date(dateStr);
+            d.setDate(d.getDate() + days);
+            return d.toISOString().split('T')[0];
           };
           
           for (const timeBlock of plannedTask.timeBlocks) {
             const blockDate = timeBlock.date || firstBlockDate;
-            let startIso = toLocalIso(blockDate, timeBlock.startTime);
-            let endIso = toLocalIso(blockDate, timeBlock.endTime);
+            const startTime = timeBlock.startTime;
+            const endTime = timeBlock.endTime;
 
-            // Handle midnight crossing: if end time is before start time on the same date,
-            // it means the time block crosses midnight, so move end date to next day
-            if (timeBlock.endTime < timeBlock.startTime) {
-              const nextDate = new Date(blockDate);
-              nextDate.setDate(nextDate.getDate() + 1);
-              const nextDateStr = nextDate.toISOString().split('T')[0];
-              endIso = toLocalIso(nextDateStr, timeBlock.endTime);
-              console.log(`Adjusted time block for "${plannedTask.title}" crossing midnight: ${startIso} -> ${endIso}`);
+            if (!startTime || !endTime) {
+              console.error(`Missing time in block for task "${plannedTask.title}", skipping...`);
+              continue;
             }
 
-            // Validate time constraint before creating
-            if (startIso >= endIso) {
-              console.error(`Invalid time block for task "${plannedTask.title}": start_time=${startIso}, end_time=${endIso}, skipping...`);
-              continue; // Skip invalid time blocks
-            }
+            // DB constraints:
+            // - end_time > start_time
+            // - date = DATE(end_time) (no midnight crossing for a single segment)
+            const crossesMidnight = endTime < startTime;
 
-            try {
-              await timeSegmentsApi.create({
+            const createOneSegment = async (dateStr: string, startIso: string, endIso: string) => {
+              if (startIso >= endIso) {
+                console.error(`Invalid time block for task "${plannedTask.title}": start_time=${startIso}, end_time=${endIso}, skipping...`);
+                return;
+              }
+
+              const duration = Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000);
+              if (duration <= 0) {
+                console.error(`Non-positive duration for task "${plannedTask.title}": start_time=${startIso}, end_time=${endIso}, skipping...`);
+                return;
+              }
+
+              await createSegment({
                 task_id: createdTask.id,
-                date: blockDate,
-                start_time: startIso,
-                end_time: endIso,
                 title: plannedTask.title,
                 title_is_custom: false,
-                source: "task",
+                date: dateStr,
+                start_time: startIso,
+                end_time: endIso,
+                duration,
+                status: 'planned',
+                order: 1,
+                description: plannedTask.description || null,
+                notes: null,
+                source: 'task',
               });
+            };
+
+            try {
+              if (!crossesMidnight) {
+                const startIso = toLocalIso(blockDate, startTime);
+                const endIso = toLocalIso(blockDate, endTime);
+                await createOneSegment(blockDate, startIso, endIso);
+              } else {
+                const nextDateStr = addDays(blockDate, 1);
+                const seg1Start = toLocalIso(blockDate, startTime);
+                const seg1End = endOfDayIso(blockDate);
+                const seg2Start = startOfDayIso(nextDateStr);
+                const seg2End = toLocalIso(nextDateStr, endTime);
+
+                console.log(
+                  `Splitting time block for "${plannedTask.title}" across midnight: ${seg1Start} -> ${seg1End} AND ${seg2Start} -> ${seg2End}`
+                );
+
+                await createOneSegment(blockDate, seg1Start, seg1End);
+                await createOneSegment(nextDateStr, seg2Start, seg2End);
+              }
             } catch (segmentError: any) {
               console.error(`Failed to create time segment for task "${plannedTask.title}":`, segmentError);
               // Continue with other time blocks even if one fails
@@ -328,8 +371,19 @@ export const AIPlanningAssistant = ({
 
       // Refresh stores
       await fetchTasks();
+      await refreshSegments();
+
+      // Refresh Daily Gantt for today (best-effort)
       const today = new Date();
       await fetchSegmentsForDate(today);
+
+      // Refresh Calendar for the current viewed range (best-effort)
+      try {
+        const { useCalendarStore } = await import('@/stores/calendarStore');
+        await useCalendarStore.getState().refreshLastFetchedRange();
+      } catch {
+        // ignore
+      }
 
       // Show success message
       if (successCount > 0) {
@@ -572,12 +626,12 @@ export const AIPlanningAssistant = ({
                 <div>
                   <h3 className="text-lg font-semibold mb-4">Task List</h3>
                   <div className="flex items-center gap-2 mb-3 text-sm text-muted-foreground">
-                    <span>生成后请勾选想保留的任务（不满意可以一个都不选）</span>
+                    <span>Select the tasks you want to keep (you can leave all unchecked).</span>
                     <Button variant="ghost" size="sm" onClick={selectAllTasks} className="h-7 px-2">
-                      全选
+                      Select all
                     </Button>
                     <Button variant="ghost" size="sm" onClick={clearSelectedTasks} className="h-7 px-2">
-                      清空
+                      Clear
                     </Button>
                   </div>
                   <div className="space-y-3">

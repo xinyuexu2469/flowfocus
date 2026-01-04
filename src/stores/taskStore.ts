@@ -72,6 +72,7 @@ interface TaskStore {
   // Actions
   fetchTasks: () => Promise<void>;
   addTask: (task: Omit<Task, 'id' | 'user_id' | 'created_at' | 'updated_at'>) => Promise<void>;
+  createTask: (task: { title: string; planned_date: string } & Partial<Omit<Task, 'id' | 'user_id' | 'created_at' | 'updated_at'>>) => Promise<Task>;
   updateTask: (id: string, updates: Partial<Task>) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
   setSelectedDate: (date: Date) => void;
@@ -79,6 +80,9 @@ interface TaskStore {
   
   // Task ordering actions (persistent, global order)
   reorderTasks: (taskIds: string[]) => Promise<void>; // Reorder tasks by their IDs array, persists to backend
+
+  // Subtask ordering (scoped to one parent)
+  reorderSubtasks: (parentTaskId: string, subtaskIds: string[]) => Promise<void>;
   
   // Legacy box ordering (deprecated, kept for backward compatibility during migration)
   reorderTasksInBox: (boxKey: string, taskIds: string[]) => void;
@@ -277,6 +281,43 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     }
   },
 
+  reorderSubtasks: async (parentTaskId: string, subtaskIds: string[]) => {
+    if (!parentTaskId || subtaskIds.length === 0) return;
+
+    const api = getApiClient();
+    const previousTasks = get().tasks;
+    const segmentsByTask = get().segmentsByTask;
+
+    // OPTIMISTIC UPDATE: apply new subtask order locally
+    const newOrderIndex = new Map<string, number>();
+    subtaskIds.forEach((id, index) => newOrderIndex.set(id, index));
+
+    const updatedTasks = previousTasks.map((task) => {
+      const index = newOrderIndex.get(task.id);
+      if (index !== undefined && task.parent_task_id === parentTaskId) {
+        return { ...task, order: index };
+      }
+      return task;
+    });
+
+    // tasksByDate only includes main tasks, but keep it consistent via shared grouper
+    const updatedTasksByDate = groupTasksByDate(updatedTasks, segmentsByTask);
+    set({ tasks: updatedTasks, tasksByDate: updatedTasksByDate });
+
+    try {
+      // Persist sequentially to avoid write races
+      for (let index = 0; index < subtaskIds.length; index++) {
+        const id = subtaskIds[index];
+        await api.tasks.update(id, { order: index });
+      }
+    } catch (error) {
+      // ROLLBACK on failure
+      const rollbackTasksByDate = groupTasksByDate(previousTasks, segmentsByTask);
+      set({ tasks: previousTasks, tasksByDate: rollbackTasksByDate });
+      throw error;
+    }
+  },
+
   // Legacy box ordering (deprecated - kept for compatibility, will be removed)
   reorderTasksInBox: (boxKey: string, taskIds: string[]) => {
     const boxOrder = new Map(get().boxOrder);
@@ -326,10 +367,14 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       // Fetch all segments to build the segmentsByTask map
       const allSegments = await api.timeSegments.getAll() as TimeSegment[];
       const segmentsByTask = new Map<string, TimeSegment[]>();
+
+      // Single Source of Truth: tasks are authoritative.
+      // Only keep segments that belong to tasks that still exist.
+      const activeTaskIds = new Set(tasks.filter(t => !t.deleted_at).map(t => t.id));
       
       // Group segments by task_id
       allSegments.forEach((segment) => {
-        if (!segment.deleted_at) {
+        if (!segment.deleted_at && activeTaskIds.has(segment.task_id)) {
           const existing = segmentsByTask.get(segment.task_id) || [];
           segmentsByTask.set(segment.task_id, [...existing, segment]);
         }
@@ -366,10 +411,12 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       const api = getApiClient();
       const allSegments = await api.timeSegments.getAll() as TimeSegment[];
       const segmentsByTask = new Map<string, TimeSegment[]>();
+
+      const activeTaskIds = new Set(get().tasks.filter(t => !t.deleted_at).map(t => t.id));
       
       // Group segments by task_id
       allSegments.forEach((segment) => {
-        if (!segment.deleted_at) {
+        if (!segment.deleted_at && activeTaskIds.has(segment.task_id)) {
           const existing = segmentsByTask.get(segment.task_id) || [];
           segmentsByTask.set(segment.task_id, [...existing, segment]);
         }
@@ -395,6 +442,24 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       set({ tasks, tasksByDate });
     } catch (error: any) {
       console.error('Error adding task:', error);
+      set({ error: error.message });
+      throw error;
+    }
+  },
+
+  createTask: async (taskData) => {
+    try {
+      const api = getApiClient();
+      const newTask = await api.tasks.create(taskData) as Task;
+
+      const tasks = [...get().tasks, newTask];
+      const segmentsByTask = get().segmentsByTask;
+      const tasksByDate = groupTasksByDate(tasks, segmentsByTask);
+      set({ tasks, tasksByDate });
+
+      return newTask;
+    } catch (error: any) {
+      console.error('Error creating task:', error);
       set({ error: error.message });
       throw error;
     }
@@ -466,10 +531,16 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       try {
         const { useCalendarStore } = await import('./calendarStore');
         const calendar = useCalendarStore.getState();
-        const now = new Date();
-        const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
-        await calendar.fetchEvents(start, end);
+        // Refresh the exact range the Calendar last fetched, so deletions reflect immediately
+        // even when the user is viewing a non-default range.
+        if (calendar.lastFetchedRange) {
+          await calendar.fetchEvents(calendar.lastFetchedRange.start, calendar.lastFetchedRange.end);
+        } else {
+          const now = new Date();
+          const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+          await calendar.fetchEvents(start, end);
+        }
       } catch (err) {
         console.warn('Failed to refresh calendar after task delete:', err);
       }

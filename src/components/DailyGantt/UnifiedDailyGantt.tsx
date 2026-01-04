@@ -13,6 +13,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import "./daily-gantt-styles.css";
 
 export const UnifiedDailyGantt: React.FC = () => {
+  const DEBUG_LOGS = false; // Flip to true for granular render/debug logging
   const {
     selectedDate,
     fetchSegmentsForDate,
@@ -52,29 +53,28 @@ export const UnifiedDailyGantt: React.FC = () => {
   const ganttRows = useMemo(() => {
     try {
       const rows = getGanttRows(selectedDate);
-      console.log('🔍 [UnifiedDailyGantt] Gantt Rows Debug:', {
-        date: selectedDate,
-        rowCount: rows.length,
-        totalSegments: rows.reduce((sum, row) => sum + row.segments.length, 0),
-        rowsWithSegments: rows.filter(r => r.segments.length > 0).length,
-        firstRowWithSegments: rows.find(r => r.segments.length > 0) || null,
-      });
-      
-      // Log each row for debugging
-      rows.forEach((row, idx) => {
-        if (row.segments.length > 0) {
-          console.log(`  Row ${idx}:`, {
-            taskTitle: row.task?.title || 'No task',
-            segmentCount: row.segments.length,
-            segments: row.segments.map(s => ({
-              id: s.id,
-              start: s.start_time,
-              end: s.end_time,
-            })),
-          });
-        }
-      });
-      
+      if (DEBUG_LOGS) {
+        console.log('🔍 [UnifiedDailyGantt] Gantt Rows Debug:', {
+          date: selectedDate,
+          rowCount: rows.length,
+          totalSegments: rows.reduce((sum, row) => sum + row.segments.length, 0),
+          rowsWithSegments: rows.filter(r => r.segments.length > 0).length,
+          firstRowWithSegments: rows.find(r => r.segments.length > 0) || null,
+        });
+        rows.forEach((row, idx) => {
+          if (row.segments.length > 0) {
+            console.log(`  Row ${idx}:`, {
+              taskTitle: row.task?.title || 'No task',
+              segmentCount: row.segments.length,
+              segments: row.segments.map(s => ({
+                id: s.id,
+                start: s.start_time,
+                end: s.end_time,
+              })),
+            });
+          }
+        });
+      }
       return rows;
     } catch (error) {
       console.error('❌ Error building gantt rows:', error);

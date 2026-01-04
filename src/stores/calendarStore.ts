@@ -18,6 +18,7 @@ export interface CalendarEvent {
 
 interface CalendarStore {
   events: CalendarEvent[];
+  lastFetchedRange: { start: Date; end: Date } | null;
   googleCalendarConnected: boolean;
   visibleCalendars: string[];
   loading: boolean;
@@ -25,6 +26,7 @@ interface CalendarStore {
 
   // Actions
   fetchEvents: (start: Date, end: Date) => Promise<void>;
+  refreshLastFetchedRange: () => Promise<void>;
   createEvent: (event: Omit<CalendarEvent, 'id'>) => Promise<void>;
   updateEvent: (id: string, updates: Partial<CalendarEvent>) => Promise<void>;
   deleteEvent: (id: string) => Promise<void>;
@@ -34,10 +36,17 @@ interface CalendarStore {
 
 export const useCalendarStore = create<CalendarStore>((set, get) => ({
   events: [],
+  lastFetchedRange: null,
   googleCalendarConnected: false,
   visibleCalendars: ['primary'],
   loading: false,
   error: null,
+
+  refreshLastFetchedRange: async () => {
+    const range = get().lastFetchedRange;
+    if (!range) return;
+    await get().fetchEvents(range.start, range.end);
+  },
 
   fetchEvents: async (start, end) => {
     set({ loading: true, error: null });
@@ -66,8 +75,27 @@ export const useCalendarStore = create<CalendarStore>((set, get) => ({
         // Ignore failed dates
       }
 
+      // Optional: If tasks are already loaded, hide segments linked to missing tasks.
+      // This keeps Calendar consistent with task deletion even if segments lag behind.
+      let activeTaskIds: Set<string> | null = null;
+      try {
+        const { useTaskStore } = await import('./taskStore');
+        const tasks = useTaskStore.getState().tasks;
+        if (tasks.length > 0) {
+          activeTaskIds = new Set(tasks.filter(t => !t.deleted_at).map(t => t.id));
+        }
+      } catch {
+        // Ignore – calendar can still function without task filtering
+      }
+
       // Build events without fetching individual tasks (use segment.title)
       const events: CalendarEvent[] = allSegments
+        .filter(segment => {
+          // Keep custom (no task) events always. If tasks are loaded, hide orphaned task segments.
+          if (!segment.task_id) return true;
+          if (!activeTaskIds) return true;
+          return activeTaskIds.has(segment.task_id);
+        })
         .filter(segment => {
           const segmentStart = new Date(segment.start_time);
           return segmentStart >= start && segmentStart <= end;
@@ -88,7 +116,7 @@ export const useCalendarStore = create<CalendarStore>((set, get) => ({
       // Sort by start time
       events.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
-      set({ events, loading: false });
+      set({ events, loading: false, lastFetchedRange: { start, end } });
     } catch (error: any) {
       set({ error: error.message, loading: false });
     }
@@ -140,11 +168,16 @@ export const useCalendarStore = create<CalendarStore>((set, get) => ({
         source: eventData.source || 'app',
       });
 
-      // Refresh events
-      const now = new Date();
-      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
-      await get().fetchEvents(start, end);
+      // Refresh events (range-aware)
+      const range = get().lastFetchedRange;
+      if (range) {
+        await get().fetchEvents(range.start, range.end);
+      } else {
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+        await get().fetchEvents(start, end);
+      }
 
       // Refresh Daily Gantt for the affected date
       try {
@@ -216,10 +249,15 @@ export const useCalendarStore = create<CalendarStore>((set, get) => ({
       Promise.all([
         (async () => {
           try {
-            const now = new Date();
-            const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-            const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
-            await get().fetchEvents(start, end);
+            const range = get().lastFetchedRange;
+            if (range) {
+              await get().fetchEvents(range.start, range.end);
+            } else {
+              const now = new Date();
+              const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+              const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+              await get().fetchEvents(start, end);
+            }
           } catch (error) {
             console.warn('Failed to refresh calendar events:', error);
           }
@@ -240,10 +278,15 @@ export const useCalendarStore = create<CalendarStore>((set, get) => ({
       });
     } catch (error: any) {
       // On error, revert optimistic update by re-fetching
-      const now = new Date();
-      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
-      get().fetchEvents(start, end);
+      const range = get().lastFetchedRange;
+      if (range) {
+        get().fetchEvents(range.start, range.end);
+      } else {
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+        get().fetchEvents(start, end);
+      }
       set({ error: error.message });
       throw error;
     }
@@ -258,11 +301,16 @@ export const useCalendarStore = create<CalendarStore>((set, get) => ({
       // Soft delete segment
       await dailyStore.deleteSegment(id);
 
-      // Refresh events
-      const now = new Date();
-      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
-      await get().fetchEvents(start, end);
+      // Refresh events (range-aware)
+      const range = get().lastFetchedRange;
+      if (range) {
+        await get().fetchEvents(range.start, range.end);
+      } else {
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+        await get().fetchEvents(start, end);
+      }
 
       // Refresh Daily Gantt for the affected date
       try {
