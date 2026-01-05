@@ -5,6 +5,42 @@ import { query } from '../db.js';
 
 const router = express.Router();
 
+function formatYmdUTC(date) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function getLocalYmdFromIsoWithOffset(isoString, tzOffsetMinutes) {
+  const ms = new Date(isoString).getTime();
+  if (!Number.isFinite(ms)) return null;
+  const shifted = new Date(ms + tzOffsetMinutes * 60 * 1000);
+  return formatYmdUTC(shifted);
+}
+
+function assertNoMidnightCross({ start_time, end_time, date, tz_offset_minutes }) {
+  const tzOffsetMinutes = Number.isFinite(Number(tz_offset_minutes))
+    ? Number(tz_offset_minutes)
+    : 0;
+
+  const startYmd = getLocalYmdFromIsoWithOffset(start_time, tzOffsetMinutes);
+  const endYmd = getLocalYmdFromIsoWithOffset(end_time, tzOffsetMinutes);
+
+  if (!startYmd || !endYmd) {
+    return { ok: false, error: 'Invalid time range: start_time/end_time are invalid.' };
+  }
+
+  if (startYmd !== date || endYmd !== date) {
+    return {
+      ok: false,
+      error: 'Invalid time range: a single time segment cannot cross midnight. Split it into two days.',
+    };
+  }
+
+  return { ok: true };
+}
+
 // Get all time segments for a user
 router.get('/', async (req, res) => {
   try {
@@ -81,12 +117,18 @@ router.post('/', async (req, res) => {
       color,
       tags,
       duration,
+      tz_offset_minutes,
     } = req.body;
 
     if (!task_id || !start_time || !end_time || !date || !title) {
       return res.status(400).json({ 
         error: 'task_id, start_time, end_time, date, and title are required' 
       });
+    }
+
+    const midnightCheck = assertNoMidnightCross({ start_time, end_time, date, tz_offset_minutes });
+    if (!midnightCheck.ok) {
+      return res.status(400).json({ error: midnightCheck.error });
     }
 
     const result = await query(
@@ -151,6 +193,37 @@ router.put('/:id', async (req, res) => {
     delete updates.id;
     delete updates.user_id;
     delete updates.created_at;
+
+    const tz_offset_minutes = updates.tz_offset_minutes;
+    delete updates.tz_offset_minutes;
+
+    // If times/date might change, validate midnight boundary using client's tz offset.
+    // We merge with current row so partial updates (e.g. end_time only) still validate.
+    if (updates.start_time || updates.end_time || updates.date) {
+      const existing = await query(
+        `SELECT start_time, end_time, date FROM time_segments
+         WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+         LIMIT 1`,
+        [id, userId]
+      );
+
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: 'Time segment not found or access denied' });
+      }
+
+      const current = existing.rows[0];
+      const merged = {
+        start_time: updates.start_time || current.start_time,
+        end_time: updates.end_time || current.end_time,
+        date: updates.date || current.date,
+        tz_offset_minutes,
+      };
+
+      const midnightCheck = assertNoMidnightCross(merged);
+      if (!midnightCheck.ok) {
+        return res.status(400).json({ error: midnightCheck.error });
+      }
+    }
 
     const updateFields = [];
     const values = [];

@@ -157,7 +157,9 @@ CREATE TABLE IF NOT EXISTS public.time_segments (
   
   -- Constraints
   CONSTRAINT valid_times CHECK (end_time > start_time),
-  CONSTRAINT no_midnight_cross CHECK (date = DATE(end_time))
+  -- NOTE: midnight-cross validation is handled at the API layer using client tz offset.
+  -- Storing start_time/end_time as TIMESTAMPTZ makes DATE(end_time) dependent on DB timezone,
+  -- which can conflict with client-local date.
 );
 
 -- ============================================

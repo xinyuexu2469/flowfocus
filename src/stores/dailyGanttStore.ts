@@ -84,6 +84,16 @@ export const useDailyGanttStore = create<DailyGanttStore>((set, get) => ({
     try {
       const api = getApiClient();
 
+      // Client timezone offset (minutes east of UTC). Used by backend to validate midnight boundary.
+      const tzOffsetMinutes = (() => {
+        try {
+          const start = parseISO(segmentData.start_time);
+          return -start.getTimezoneOffset();
+        } catch {
+          return 0;
+        }
+      })();
+
       // Calculate order (session number) for this task on this date
       const existingSegments = get().segments.filter(
         (s) => s.task_id === segmentData.task_id && s.date === segmentData.date
@@ -99,7 +109,8 @@ export const useDailyGanttStore = create<DailyGanttStore>((set, get) => ({
         ...segmentData,
         order,
         duration,
-      }) as TimeSegment;
+        tz_offset_minutes: tzOffsetMinutes,
+      } as any) as TimeSegment;
 
       const segments = [...get().segments, newSegment];
       set({ segments });
@@ -219,7 +230,25 @@ export const useDailyGanttStore = create<DailyGanttStore>((set, get) => ({
 
       // Fire API call in background (don't await before continuing)
       const api = getApiClient();
-      const apiPromise = api.timeSegments.update(id, updates) as Promise<TimeSegment>;
+
+      // Include tz offset for midnight validation (keep it out of local store state)
+      const tzOffsetMinutes = (() => {
+        try {
+          const refIso = updates.start_time || segment?.start_time;
+          if (!refIso) return 0;
+          const ref = parseISO(refIso);
+          return -ref.getTimezoneOffset();
+        } catch {
+          return 0;
+        }
+      })();
+
+      const updatesForApi = {
+        ...updates,
+        tz_offset_minutes: tzOffsetMinutes,
+      } as any;
+
+      const apiPromise = api.timeSegments.update(id, updatesForApi) as Promise<TimeSegment>;
 
       // Update task's scheduled_time in background (if we have segment data)
       if (optimisticUpdated && optimisticUpdated.task_id) {
@@ -405,7 +434,34 @@ export const useDailyGanttStore = create<DailyGanttStore>((set, get) => ({
     try {
       // Update all segments via API
       const api = getApiClient();
-      await Promise.all(ids.map(id => api.timeSegments.update(id, updates)));
+
+      const updatesForApiBase: any = { ...updates };
+      const hasTimeChange = Boolean(updates.start_time || updates.end_time || updates.date);
+
+      await Promise.all(
+        ids.map(async (id) => {
+          if (!hasTimeChange) {
+            return api.timeSegments.update(id, updatesForApiBase);
+          }
+
+          // Derive tz offset per segment (handles DST differences across dates)
+          const seg = get().segments.find((s) => s.id === id);
+          const refIso = updates.start_time || seg?.start_time;
+          let tzOffsetMinutes = 0;
+          if (refIso) {
+            try {
+              tzOffsetMinutes = -parseISO(refIso).getTimezoneOffset();
+            } catch {
+              tzOffsetMinutes = 0;
+            }
+          }
+
+          return api.timeSegments.update(id, {
+            ...updatesForApiBase,
+            tz_offset_minutes: tzOffsetMinutes,
+          });
+        })
+      );
 
       // Refresh segments from API to get updated data
       const currentDate = get().selectedDate;

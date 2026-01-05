@@ -56,6 +56,7 @@ async function main() {
   const schemaPath = path.join(repoRoot, 'schema.sql');
   const googleCalendarMigrationPath = path.join(__dirname, '..', 'migrations', 'add_google_calendar.sql');
   const prdMigrationPath = path.join(__dirname, '..', 'migrations', 'add_prd_fields.sql');
+  const dropNoMidnightCrossPath = path.join(__dirname, '..', 'migrations', 'drop_no_midnight_cross.sql');
 
   if (!command || !['schema', 'gc', 'prd', 'init'].includes(command)) {
     console.error('Usage: node scripts/migrate.js <schema|gc|prd|init>');
@@ -75,6 +76,14 @@ async function main() {
     } else {
       await runSqlFile(schemaPath);
       console.log('✅ applied schema.sql');
+    }
+
+    // Ensure legacy constraint is removed (safe to run repeatedly)
+    try {
+      await runSqlFile(dropNoMidnightCrossPath);
+      console.log('✅ dropped no_midnight_cross constraint (if existed)');
+    } catch (err) {
+      console.warn('⚠️  could not drop no_midnight_cross constraint:', err.message);
     }
 
     // PRD fields are required by /api/tasks (planned_date, priority_color, etc.)
